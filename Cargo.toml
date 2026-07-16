@@ -1,0 +1,16 @@
+[package]
+name = "grpc_network_gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+tokio = { version = "1.52", features = ["full"] }
+tonic = "0.14"
+prost = "0.14"
+tonic-prost = "0.14"
+sqlx = { version = "0.9.0", default-features = false, features = ["macros", "postgres", "runtime-tokio"] }
+tracing = "0.1"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
