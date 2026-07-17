@@ -1,0 +1,28 @@
+syntax = "proto3";
+package grpc.connectivity;
+
+service GatewayController {
+  rpc CreateVpnTunnel (TunnelRequest) returns (TunnelResponse);
+  rpc RoutePacket (PacketRequest) returns (PacketResponse);
+}
+
+message TunnelRequest {
+  string tunnel_id = 1;
+  string local_ip = 2;
+  string remote_endpoint = 3;
+}
+
+message TunnelResponse {
+  bool success = 1;
+  string status_message = 2;
+}
+
+message PacketRequest {
+  string destination_ip = 1;
+  bytes payload = 2;
+}
+
+message PacketResponse {
+  string action = 1; // e.g., "FORWARDED", "DROPPED"
+  uint32 bytes_processed = 2;
+}
