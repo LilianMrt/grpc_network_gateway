@@ -1,4 +1,5 @@
 mod services;
+mod network;
 
 use std::net::SocketAddr;
 use tonic::transport::Server;
@@ -11,9 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = "0.0.0.0:50051".parse()?;
     println!("gRPC Control Plane listening on {}", addr);
 
-    let gateway = Gateway::default();
+    let routing_table = crate::network::router::RoutingTable::new();
+    let gateway = Gateway::new(routing_table);
 
-    // 3. Start the Server
     Server::builder() 
         .add_service(GatewayControllerServer::new(gateway))
         .serve(addr)

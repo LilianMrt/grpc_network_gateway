@@ -4,6 +4,7 @@ package grpc.connectivity;
 service GatewayController {
   rpc CreateVpnTunnel (TunnelRequest) returns (TunnelResponse);
   rpc RoutePacket (PacketRequest) returns (PacketResponse);
+  rpc GetGatewayStatus (StatusRequest) returns (StatusResponse);
 }
 
 message TunnelRequest {
@@ -25,4 +26,16 @@ message PacketRequest {
 message PacketResponse {
   string action = 1; // e.g., "FORWARDED", "DROPPED"
   uint32 bytes_processed = 2;
+}
+
+message StatusRequest {}
+
+message RouteDetails {
+  string destination_ip = 1;
+  string tunnel_id = 2;
+  string remote_endpoint = 3;
+}
+
+message StatusResponse {
+  repeated RouteDetails active_routes = 1;
 }
