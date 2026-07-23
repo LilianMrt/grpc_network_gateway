@@ -1,6 +1,6 @@
 use tonic::{ Request, Response, Status };
 use std::net::Ipv4Addr;
-use crate::network::router::{ RoutingTable, Route };
+use crate::network::router::{ RoutingTable, Route, parse_destination_ip };
 
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/grpc.connectivity.rs"));
@@ -56,12 +56,43 @@ impl GatewayController for Gateway {
         &self,
         request: Request<PacketRequest>
     ) -> Result<Response<PacketResponse>, Status> {
-        // Placeholder for packet simulation logic
-        let response = PacketResponse {
-            action: "FORWARDED".to_string(),
-            bytes_processed: 0,
+        let packet_bytes = &request.into_inner().payload;
+
+        let dest_ip = match parse_destination_ip(packet_bytes) {
+            Ok(ip) => ip,
+            Err(_) => {
+                return Ok(
+                    Response::new(PacketResponse {
+                        action: "DROPPED (MALFORMED_HEADER)".to_string(),
+                        bytes_processed: packet_bytes.len() as u32,
+                    })
+                );
+            }
         };
-        Ok(Response::new(response))
+
+        let search_result = self.routing_table.lookup_route(&dest_ip).await;
+
+        let action = match search_result {
+            Some(route) => {
+                println!(
+                    "Forwarding packet via Tunnel '{}' to remote gateway: {}",
+                    route.tunnel_id,
+                    route.remote_endpoint
+                );
+                "FORWARDED".to_string()
+            }
+            None => {
+                println!("No route found for destination IP: {}. Dropping packet.", dest_ip);
+                "DROPPED (NO_ROUTE)".to_string()
+            }
+        };
+
+        Ok(
+            Response::new(PacketResponse {
+                action,
+                bytes_processed: packet_bytes.len() as u32,
+            })
+        )
     }
 
     async fn get_gateway_status(

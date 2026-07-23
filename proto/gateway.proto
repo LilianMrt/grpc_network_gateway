@@ -19,7 +19,6 @@ message TunnelResponse {
 }
 
 message PacketRequest {
-  string destination_ip = 1;
   bytes payload = 2;
 }
 
