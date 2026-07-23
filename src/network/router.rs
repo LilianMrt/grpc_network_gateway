@@ -31,6 +31,11 @@ impl RoutingTable {
         read_guard.get(ip).cloned()
     }
 
+    pub async fn load_routes(&self, routes: HashMap<Ipv4Addr, Route>) {
+        let mut write_guard = self.table.write().await;
+        *write_guard = routes;
+    }
+
     pub async fn get_all_routes(&self) -> HashMap<Ipv4Addr, Route> {
         let read_guard = self.table.read().await;
         read_guard.clone()

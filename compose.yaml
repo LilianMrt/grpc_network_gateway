@@ -1,0 +1,9 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: network_gateway_user
+      POSTGRES_PASSWORD: network_gateway_password
+      POSTGRES_DB: network_gateway_db
+    ports:
+      - "5432:5432"

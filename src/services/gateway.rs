@@ -9,14 +9,17 @@ pub mod proto {
 use proto::gateway_controller_server::GatewayController;
 use proto::{ TunnelRequest, TunnelResponse, PacketRequest, PacketResponse };
 
+use sqlx::PgPool;
+
 #[derive(Debug)]
 pub struct Gateway {
     pub routing_table: RoutingTable,
+    pub db_pool: PgPool
 }
 
 impl Gateway {
-    pub fn new(routing_table: RoutingTable) -> Self {
-        Self { routing_table }
+    pub fn new(routing_table: RoutingTable, db_pool: PgPool) -> Self {
+        Self { routing_table, db_pool }
     }
 }
 
@@ -32,7 +35,7 @@ impl GatewayController for Gateway {
         let local_ip: Ipv4Addr = payload.local_ip
             .parse()
             .map_err(|err| {
-                tonic::Status::invalid_argument(
+                Status::invalid_argument(
                     format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
                 )
             })?;
@@ -44,6 +47,21 @@ impl GatewayController for Gateway {
 
         self.routing_table.add_route(local_ip, route_config).await;
 
+        sqlx::query!(
+        "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint) 
+         VALUES ($1, $2, $3)
+         ON CONFLICT (local_ip) 
+         DO UPDATE SET tunnel_id = EXCLUDED.tunnel_id, remote_endpoint = EXCLUDED.remote_endpoint",
+        payload.local_ip,
+        payload.tunnel_id,
+        payload.remote_endpoint
+        )
+        .execute(&self.db_pool)
+        .await
+        .map_err(|err| {
+            Status::internal(format!("Database persistence failure: {}", err))
+        })?;
+    
         let response = TunnelResponse {
             success: true,
             status_message: format!("Tunnel {} successfully created", payload.tunnel_id),
