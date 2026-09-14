@@ -513,6 +513,7 @@ dependencies = [
 name = "grpc_network_gateway"
 version = "0.1.0"
 dependencies = [
+ "dotenvy",
  "openssl",
  "prost",
  "sqlx",

@@ -7,7 +7,14 @@ pub mod proto {
 }
 
 use proto::gateway_controller_server::GatewayController;
-use proto::{ TunnelRequest, TunnelResponse, PacketRequest, PacketResponse };
+use proto::{
+    TunnelRequest,
+    TunnelResponse,
+    PacketRequest,
+    PacketResponse,
+    DeleteTunnelRequest,
+    DeleteTunnelResponse,
+};
 
 use sqlx::PgPool;
 
@@ -68,6 +75,40 @@ impl GatewayController for Gateway {
         };
 
         Ok(Response::new(response))
+    }
+
+    async fn delete_vpn_tunnel(
+        &self,
+        request: Request<DeleteTunnelRequest>
+    ) -> Result<Response<DeleteTunnelResponse>, Status> {
+        let payload = request.into_inner();
+
+        let local_ip: Ipv4Addr = payload.local_ip
+            .parse()
+            .map_err(|err| {
+                Status::invalid_argument(
+                    format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
+                )
+            })?;
+
+        let result = sqlx
+            ::query!("DELETE FROM vpn_routes WHERE local_ip = $1", payload.local_ip)
+            .execute(&self.db_pool).await
+            .map_err(|err| { Status::internal(format!("Database delete failure: {}", err)) })?;
+
+        let existed = result.rows_affected() > 0;
+        self.routing_table.remove_route(&local_ip).await;
+
+        let status_message = if existed {
+            format!("Tunnel for {} deleted", local_ip)
+        } else {
+            format!("No tunnel for {}, nothing to delete", local_ip)
+        };
+        println!("{}", status_message);
+
+        // Deleting an absent tunnel is success, not an error: a reconcile loop
+        // converges toward a desired state and must be safe to run repeatedly.
+        Ok(Response::new(DeleteTunnelResponse { success: true, existed, status_message }))
     }
 
     async fn route_packet(

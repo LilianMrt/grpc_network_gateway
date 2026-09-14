@@ -26,6 +26,11 @@ impl RoutingTable {
         write_guard.insert(ip, route);
     }
 
+    pub async fn remove_route(&self, ip: &Ipv4Addr) -> Option<Route> {
+        let mut write_guard = self.table.write().await;
+        write_guard.remove(ip)
+    }
+
     pub async fn lookup_route(&self, ip: &Ipv4Addr) -> Option<Route> {
         let read_guard = self.table.read().await;
         read_guard.get(ip).cloned()

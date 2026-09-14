@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT local_ip, tunnel_id, remote_endpoint FROM vpn_routes",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "local_ip",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "vpn_routes",
+            "name": "local_ip"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "tunnel_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "vpn_routes",
+            "name": "tunnel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "remote_endpoint",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "vpn_routes",
+            "name": "remote_endpoint"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e7553cb44c98203a6e93f2086be38944d37198b19c864c3159ee7eb8e5c9b3a4"
+}

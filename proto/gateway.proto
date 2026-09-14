@@ -4,6 +4,7 @@ package grpc.connectivity;
 service GatewayController {
   rpc CreateVpnTunnel (TunnelRequest) returns (TunnelResponse);
   rpc RoutePacket (PacketRequest) returns (PacketResponse);
+  rpc DeleteVpnTunnel (DeleteTunnelRequest) returns (DeleteTunnelResponse);
   rpc GetGatewayStatus (StatusRequest) returns (StatusResponse);
 }
 
@@ -16,6 +17,19 @@ message TunnelRequest {
 message TunnelResponse {
   bool success = 1;
   string status_message = 2;
+}
+
+// Tunnels are keyed on local_ip, which is the unique column in vpn_routes.
+message DeleteTunnelRequest {
+  string local_ip = 1;
+}
+
+// Idempotent: deleting an absent tunnel succeeds, so a reconcile loop can retry
+// freely. existed = false tells the caller the route was already gone.
+message DeleteTunnelResponse {
+  bool success = 1;
+  bool existed = 2;
+  string status_message = 3;
 }
 
 message PacketRequest {

@@ -1,27 +1,36 @@
-mod services;
-mod network;
 
 use std::collections::HashMap;
+use std::env;
 use std::net::{ Ipv4Addr, SocketAddr };
 use tonic::transport::Server;
 
-use services::gateway::Gateway;
-use services::gateway::proto::gateway_controller_server::GatewayControllerServer;
+use grpc_network_gateway::services::gateway::Gateway;
+use grpc_network_gateway::services::gateway::proto::gateway_controller_server::GatewayControllerServer;
 
 use sqlx::postgres::PgPoolOptions;
 
-use crate::network::router::Route;
+use grpc_network_gateway::network::router::{ Route, RoutingTable };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = "0.0.0.0:50051".parse()?;
+    // Load .env for local runs. In a container the environment is already set,
+    // so a missing file is not an error.
+    let _ = dotenvy::dotenv();
+
+    let addr: SocketAddr = env
+        ::var("BIND_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
+        .parse()?;
+
+    let database_url = env
+        ::var("DATABASE_URL")
+        .map_err(|_| "DATABASE_URL must be set (see .env.example)")?;
+
     println!("gRPC Control Plane listening on {}", addr);
 
-    let database_url = "postgres://netforge_user:netforge_password@localhost:5432/netforge_db";
+    let db_pool = PgPoolOptions::new().max_connections(5).connect(&database_url).await?;
 
-    let db_pool = PgPoolOptions::new().max_connections(5).connect(database_url).await?;
-
-    let routing_table = crate::network::router::RoutingTable::new();
+    let routing_table = RoutingTable::new();
     //hydrate
     let records = sqlx
         ::query!("SELECT local_ip, tunnel_id, remote_endpoint FROM vpn_routes")

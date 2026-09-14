@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM vpn_routes WHERE local_ip = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2332676f3d9a3ce86f3256e32be05497ac6e316526e05b3be4e32a166646cdfb"
+}
