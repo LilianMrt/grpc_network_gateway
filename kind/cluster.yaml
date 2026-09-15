@@ -1,0 +1,15 @@
+# Local single-node cluster for developing the gateway and, later, its operator.
+#
+# The port mapping lets tooling on the host (examples/smoke_client.rs,
+# examples/health_probe.rs) talk to the in-cluster gateway without port-forward.
+# It is bound to 127.0.0.1 deliberately: kind publishes through Docker, and.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: netgw
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30051
+        hostPort: 50051
+        listenAddress: "127.0.0.1"
+        protocol: TCP
