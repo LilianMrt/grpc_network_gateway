@@ -1,4 +1,5 @@
 use tonic::{ Request, Response, Status };
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use crate::network::router::{ RoutingTable, Route, parse_destination_ip };
 
@@ -17,6 +18,29 @@ use proto::{
 };
 
 use sqlx::PgPool;
+
+/// Loads persisted routes into the in-memory table, returning how many were
+/// applied. Retryable: the routing table is replaced wholesale, so running this
+/// again after a failure is safe and converges on the database's contents.
+pub async fn hydrate(pool: &PgPool, table: &RoutingTable) -> Result<usize, sqlx::Error> {
+    let records = sqlx
+        ::query!("SELECT local_ip, tunnel_id, remote_endpoint FROM vpn_routes")
+        .fetch_all(pool).await?;
+
+    let mut routes = HashMap::new();
+    for row in records {
+        if let Ok(ip) = row.local_ip.parse::<Ipv4Addr>() {
+            routes.insert(ip, Route {
+                tunnel_id: row.tunnel_id,
+                remote_endpoint: row.remote_endpoint,
+            });
+        }
+    }
+
+    let count = routes.len();
+    table.load_routes(routes).await;
+    Ok(count)
+}
 
 #[derive(Debug)]
 pub struct Gateway {
