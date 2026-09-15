@@ -1,0 +1,22 @@
+# The gateway does not run its own migrations, so the schema has to exist before
+# it can hydrate. The postgres image executes every *.sql in this directory on
+# first initialisation, which is enough for a development cluster.
+#
+# Honest limitation: this bypasses sqlx's _sqlx_migrations bookkeeping, so it is
+# not how a real deployment should work. Production runs migrations as an
+# explicit step (a Job, or an init container) so they are versioned and audited.
+# The statement is idempotent, so re-running it is harmless either way.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  namespace: netgw
+data:
+  01_init_routing_table.sql: |
+    CREATE TABLE IF NOT EXISTS vpn_routes (
+        id SERIAL PRIMARY KEY,
+        local_ip VARCHAR(45) NOT NULL UNIQUE,
+        tunnel_id VARCHAR(255) NOT NULL,
+        remote_endpoint VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );

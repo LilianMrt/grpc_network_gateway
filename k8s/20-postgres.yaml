@@ -1,0 +1,76 @@
+# Headless Service: the StatefulSet needs stable per-pod DNS, and the gateway
+# reaches the database at postgres.netgw.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: netgw
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: netgw
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          envFrom:
+            - secretRef:
+                name: gateway-db
+          env:
+            # The postgres image refuses to initialise into a non-empty
+            # directory, and a mounted volume always contains lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "network_gateway_user", "-d", "network_gateway_db"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            # Deliberately small: this cluster runs on a 3.7 GB WSL2 host.
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgres-initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

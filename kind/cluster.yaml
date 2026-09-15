@@ -6,8 +6,14 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: netgw
+#
+# The node image is pinned because this host (WSL2) mounts cgroup v1, and the
+# kubelet from Kubernetes 1.36 onward refuses to start on it. v1.33 still
+# tolerates cgroup v1. Drop this pin once the host runs the unified hierarchy
+# (add `kernelCommandLine = cgroup_no_v1=all` to .wslconfig, then wsl --shutdown).
 nodes:
   - role: control-plane
+    image: kindest/node:v1.33.1
     extraPortMappings:
       - containerPort: 30051
         hostPort: 50051

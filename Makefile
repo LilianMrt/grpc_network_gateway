@@ -65,6 +65,22 @@ load: image ## Build the image and load it into the kind cluster
 	# exists locally.
 	kind load docker-image $(IMAGE) --name $(CLUSTER)
 
+.PHONY: deploy
+deploy: ## Apply the manifests to the kind cluster
+	kubectl apply -f k8s/
+
+.PHONY: undeploy
+undeploy: ## Remove the netgw namespace and everything in it
+	kubectl delete namespace netgw --ignore-not-found
+
+.PHONY: status
+status: ## Show what is running in the netgw namespace
+	kubectl get all,pvc -n netgw
+
+.PHONY: logs
+logs: ## Tail the gateway pod logs
+	kubectl logs -n netgw -l app=gateway -f --tail=50
+
 .PHONY: cluster-info
 cluster-info: ## Show cluster and node status
 	kubectl cluster-info --context kind-$(CLUSTER)

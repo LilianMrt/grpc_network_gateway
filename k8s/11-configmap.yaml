@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: netgw
+data:
+  BIND_ADDR: "0.0.0.0:50051"
