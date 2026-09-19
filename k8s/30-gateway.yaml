@@ -21,6 +21,19 @@ metadata:
   name: gateway
   namespace: netgw
 spec:
+  # Deliberately 1, and there is deliberately no PodDisruptionBudget.
+  #
+  # Two replicas would not be correct today. Each pod hydrates the routing table
+  # into memory at startup and never revalidates it; CreateVpnTunnel writes the
+  # caller's own pod plus Postgres, and GetGatewayStatus reads that pod's memory.
+  # So a create served by pod A is invisible to pod B for the lifetime of the
+  # pod. Making this horizontally scalable needs either control-plane reads that
+  # go to Postgres, or a periodic resync of the cache, which is the same
+  # drift-correction the operator will implement. Tracked as a follow-up.
+  #
+  # And a PDB would be actively harmful at one replica: minAvailable: 1 makes the
+  # pod ineligible for voluntary eviction, so a node drain blocks forever. A PDB
+  # earns its place once replicas > 1, not before.
   replicas: 1
   selector:
     matchLabels:
@@ -30,6 +43,14 @@ spec:
       labels:
         app: gateway
     spec:
+      securityContext:
+        runAsNonRoot: true
+        # Matches the uid baked into distroless :nonroot. Stated explicitly so
+        # the cluster rejects the pod if the image ever changes underneath us.
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: gateway
           image: grpc-network-gateway:dev
@@ -48,6 +69,36 @@ spec:
           ports:
             - name: grpc
               containerPort: 50051
+
+          # Liveness and readiness deliberately query DIFFERENT health services.
+          #
+          # Readiness ("" , the overall entry) follows the database: when
+          # Postgres is unreachable the pod is removed from the Service and
+          # stops receiving traffic.
+          #
+          # Liveness ("liveness") never does. Restarting a process because its
+          # database is down fixes nothing and turns an outage into a restart
+          # storm across every replica at once.
+          livenessProbe:
+            grpc:
+              port: 50051
+              service: liveness
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50051
+              service: ""
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 2
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
           resources:
             requests:
               cpu: 50m

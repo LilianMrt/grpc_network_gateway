@@ -25,7 +25,20 @@ use crate::services::gateway::hydrate;
 
 /// The empty service name is the overall-health entry in the gRPC health
 /// checking protocol, and is what Kubernetes probes when no service is named.
+/// It carries *readiness*: it goes NOT_SERVING whenever the database is
+/// unreachable, so the endpoint is pulled out of the Service.
 pub const OVERALL: &str = "";
+
+/// A separate entry carrying *liveness*, set SERVING once the gRPC server is
+/// listening and never changed afterwards.
+///
+/// This must not depend on Postgres. Liveness answers "should this container be
+/// killed and restarted?", and a database outage is not a reason to restart the
+/// process: every replica would fail its liveness probe at once and enter a
+/// restart storm that makes the outage worse while fixing nothing. Readiness
+/// alone is the correct response to a failed dependency, because it stops
+/// traffic without destroying a process that is perfectly capable of recovering.
+pub const LIVENESS: &str = "liveness";
 
 /// Hydrates the routing table, then keeps reported health in step with the
 /// database. The caller should report NOT_SERVING before serving begins, so no

@@ -13,6 +13,7 @@ use sqlx::postgres::PgPoolOptions;
 
 use grpc_network_gateway::network::router::RoutingTable;
 use grpc_network_gateway::services::health;
+use grpc_network_gateway::services::health::{ LIVENESS, OVERALL };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,10 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     let service_name = <GatewayControllerServer<Gateway> as NamedService>::NAME;
 
-    // Report NotServing until the watcher's first query succeeds, so a probe can
-    // never see SERVING before the database has actually answered.
-    health_reporter.set_service_status(health::OVERALL, ServingStatus::NotServing).await;
+    // Readiness starts NotServing so a probe can never observe SERVING before the
+    // database has actually answered. Liveness is SERVING from here on: the
+    // process is up, and a database outage must not restart it.
+    health_reporter.set_service_status(OVERALL, ServingStatus::NotServing).await;
     health_reporter.set_service_status(service_name, ServingStatus::NotServing).await;
+    health_reporter.set_service_status(LIVENESS, ServingStatus::Serving).await;
     // Hydrates the routing table, then keeps readiness in step with the database.
     health::spawn_readiness_task(
         health_reporter,
