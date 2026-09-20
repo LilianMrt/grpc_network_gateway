@@ -1,2 +1,9 @@
 /target
 .env
+.claude
+*.user.toml
+_bmad-output/**/.memlog.md
+_bmad/*
+!_bmad/custom/
+_bmad/custom/*
+!_bmad/custom/config.toml
