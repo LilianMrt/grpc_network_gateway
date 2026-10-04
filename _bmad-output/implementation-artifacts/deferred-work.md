@@ -21,3 +21,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-emit-every-gateway-log-line-through-tracing.md`
   summary: AGENTS.md says "no println! under src/" with nothing enforcing it, and still describes _bmad-output/planning-artifacts as gitignored although it has been committed since b270bd4.
   evidence: Triage #37, and #33's finding that addendum.md is tracked. The fix edits an agent-context file; Story 1.7 owns the AGENTS.md refresh.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
+  summary: Store failure paths have no automated test. Store is a concrete type with no trait or test constructor, so the create store-first order and the once-per-transition readiness WARN can only be proved by stopping a real Postgres.
+  evidence: Triage #1, #2, #3. The repo has no #[test]; the smoke client never makes the upsert fail; nothing captures log output. Natural home: Story 1.3 (proving failed-create behaviour) or 1.5 (first tests).
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
+  summary: A store write and its cache update are not one unit, so concurrent create/create or create/delete on the same local_ip, or a request cancelled between the two awaits, can leave vpn_routes and the routing table disagreeing until restart.
+  evidence: Triage #4, #5. No lock spans upsert_route/delete_route and add_route/remove_route in src/services/gateway.rs. Pre-existing: the old create order had the mirror-image race. replicas: 1 does not prevent it within one pod.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
+  summary: hydrate() reads list_routes and then replaces the routing table wholesale, so a create that commits between the two is dropped from the cache and never reloaded.
+  evidence: Triage #6. hydrated=true stops further hydration, and the server accepts gRPC calls while not ready. Pre-existing SELECT-then-load_routes order, moved unchanged.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
+  summary: tunnel_id and remote_endpoint reach the upsert unvalidated, so an empty or over-long value surfaces as Internal carrying raw sqlx error text.
+  evidence: Triage #7. Pre-existing; Story 1.5 owns the validation bounds and the INVALID_ARGUMENT mapping.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
+  summary: AGENTS.md still says make check is the only automated verification and states no "SQL only in src/store/" rule, though make check-sqlx and the store boundary now exist.
+  evidence: Triage #15. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
