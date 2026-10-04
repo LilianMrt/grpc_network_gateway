@@ -15,14 +15,14 @@
 
 use std::time::Duration;
 
-use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
-use tracing::info;
+use tracing::{ info, warn };
 
 use crate::network::router::RoutingTable;
 use crate::services::gateway::hydrate;
+use crate::store::Store;
 
 /// The empty service name is the overall-health entry in the gRPC health
 /// checking protocol, and is what Kubernetes probes when no service is named.
@@ -46,7 +46,7 @@ pub const LIVENESS: &str = "liveness";
 /// probe can observe SERVING before the first check has actually run.
 pub fn spawn_readiness_task(
     reporter: HealthReporter,
-    pool: PgPool,
+    store: Store,
     routing_table: RoutingTable,
     service_name: &'static str,
     interval: Duration
@@ -56,27 +56,29 @@ pub fn spawn_readiness_task(
         let mut last: Option<bool> = None;
 
         loop {
-            let ready = if hydrated {
-                sqlx::query("SELECT 1").execute(&pool).await.is_ok()
+            let check = if hydrated {
+                store.ping().await
             } else {
-                match hydrate(&pool, &routing_table).await {
-                    Ok(count) => {
-                        // `count` stays in the message: the FR-10 demo quotes this literal text.
-                        info!(count, "hydrated {} route(s) from the database", count);
-                        hydrated = true;
-                        true
-                    }
-                    Err(_) => false,
-                }
+                hydrate(&store, &routing_table).await.map(|count| {
+                    // `count` stays in the message: the FR-10 demo quotes this literal text.
+                    info!(count, "hydrated {} route(s) from the database", count);
+                    hydrated = true;
+                })
             };
+            let ready = check.is_ok();
 
             let status = if ready { ServingStatus::Serving } else { ServingStatus::NotServing };
             reporter.set_service_status(OVERALL, status).await;
             reporter.set_service_status(service_name, status).await;
 
-            // Log transitions only, so a healthy server stays quiet.
+            // Log transitions only, so a healthy server stays quiet and an
+            // outage logs its cause once rather than on every check. Going
+            // not-ready is a warning, so RUST_LOG=warn still shows it.
             if last != Some(ready) {
-                info!(%status, "readiness status changed");
+                match &check {
+                    Ok(()) => info!(%status, "readiness status changed"),
+                    Err(err) => warn!(%status, error = %err, "readiness status changed"),
+                }
                 last = Some(ready);
             }
 

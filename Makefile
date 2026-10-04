@@ -26,6 +26,17 @@ migrate: ## Apply database migrations
 prepare: ## Regenerate .sqlx offline data (needs a running database)
 	cargo sqlx prepare -- --all-targets
 
+# git status --porcelain, not git diff --exit-code: diff ignores untracked
+# files, and a query whose text changed lands in .sqlx/ as a new, untracked file.
+.PHONY: check-sqlx
+check-sqlx: ## Regenerate .sqlx and fail if it differs from git (needs Postgres)
+	cargo sqlx prepare -- --all-targets
+	@if [ -n "$$(git status --porcelain -- .sqlx)" ]; then \
+	  echo "check-sqlx: .sqlx/ differs from git; commit the regenerated files" >&2; \
+	  git status --porcelain -- .sqlx >&2; \
+	  exit 1; \
+	fi
+
 .PHONY: check
 check: ## Type-check everything without a database
 	SQLX_OFFLINE=true cargo check --all-targets

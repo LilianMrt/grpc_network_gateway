@@ -10,12 +10,11 @@ use tracing::info;
 use grpc_network_gateway::services::gateway::Gateway;
 use grpc_network_gateway::services::gateway::proto::gateway_controller_server::GatewayControllerServer;
 
-use sqlx::postgres::PgPoolOptions;
-
 use grpc_network_gateway::logging;
 use grpc_network_gateway::network::router::RoutingTable;
 use grpc_network_gateway::services::health;
 use grpc_network_gateway::services::health::{ LIVENESS, OVERALL };
+use grpc_network_gateway::store::Store;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,11 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Lazy: constructing the pool must not require Postgres to be up yet, so a
     // pod scheduled before its database reports not-ready instead of crashing.
-    let db_pool = PgPoolOptions::new().max_connections(5).connect_lazy(&database_url)?;
+    let store = Store::connect_lazy(&database_url)?;
 
     let routing_table = RoutingTable::new();
 
-    let gateway = Gateway::new(routing_table.clone(), db_pool.clone());
+    let gateway = Gateway::new(routing_table.clone(), store.clone());
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     let service_name = <GatewayControllerServer<Gateway> as NamedService>::NAME;
@@ -56,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Hydrates the routing table, then keeps readiness in step with the database.
     health::spawn_readiness_task(
         health_reporter,
-        db_pool,
+        store,
         routing_table,
         service_name,
         Duration::from_secs(5)
