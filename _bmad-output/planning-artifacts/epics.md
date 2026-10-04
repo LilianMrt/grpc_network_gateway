@@ -1,5 +1,5 @@
 ---
-stepsCompleted: [1, 2]
+stepsCompleted: [1, 2, 3, 4]
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-grpc_network_gateway-2026-09-19/prd.md'
   - '_bmad-output/planning-artifacts/architecture/architecture-grpc_network_gateway-2026-09-19/ARCHITECTURE-SPINE.md'
@@ -15,7 +15,8 @@ This document provides the complete epic and story breakdown for grpc_network_ga
 
 **Authority notes carried from the inputs, binding on everything below:**
 
-- **PRD §9 is the authority on epic sequence**, not the PRD's own section numbering. Seven epics: E1, E2, E3, E4, E5a, E5b, E6.
+- **PRD §9 is the authority on epic sequence**, not the PRD's own section numbering. Seven epics: E1, E2, E3, E4, E5, E6, E7.
+- **Epic numbering differs from the PRD and the spine after E4. Renumbered 2026-10-04** so that sprint tracking, which takes integer epic keys only, can carry every story. PRD/spine **E5a** is **Epic 5** here, **E5b** is **Epic 6**, and **E6** is **Epic 7**. Their stories were renumbered with them (5a.N to 5.N, 5b.N to 6.N, 6.N to 7.N). When the PRD or the spine says "E6" it means Legibility, which this document calls Epic 7.
 - **Every FR carries a binding `Status:` line.** `Delivered — no story` FRs must not produce stories; they are inventoried here because the Operator's design depends on their exact semantics.
 - **Where the PRD and the architecture spine disagree on a structural decision, the spine governs.** Five such overrides are recorded in the spine's *Where This Contradicts Its Inputs* table and are reproduced under Additional Requirements below.
 - **No UX design contract exists, and none is expected.** The system's only human surfaces are `kubectl`, the Makefile and the README. The UX Design Requirements section below is deliberately empty.
@@ -87,7 +88,7 @@ Technical requirements drawn from the architecture spine that shape stories but 
 
 **Prerequisites that the spine leaves unowned, each blocking its phase** (spine, closing line). **Decision 2026-09-20: both get stories, and both are marked `Performed by Lilian` — they are host-level changes an agent must not make.** A story of this kind states what must be true, how to verify it, and stops; it contains no agent-executed steps.
 - **Go 1.27.1 is not installed on this host.** `>= 1.26` is required by controller-runtime. Blocks all of Phase B. Story sits at the head of E2, the first Go epic.
-- **The AD-11 host cgroup fix has not been applied.** Verified 2026-09-20: no `cgroup_no_v1` in `/proc/cmdline`, 16 v1 controllers mounted, `kind/cluster.yaml` still pinning `v1.33.1` by tag. Requires `kernelCommandLine = cgroup_no_v1=all` in `.wslconfig` and `wsl --shutdown` — a Windows-side file edit and a WSL restart, outside the reach of anything running inside WSL. Owned by E5a per AD-11; unblocks the pin moving to `kindest/node:v1.37.0` by digest.
+- **The AD-11 host cgroup fix has not been applied.** Verified 2026-09-20: no `cgroup_no_v1` in `/proc/cmdline`, 16 v1 controllers mounted, `kind/cluster.yaml` still pinning `v1.33.1` by tag. Requires `kernelCommandLine = cgroup_no_v1=all` in `.wslconfig` and `wsl --shutdown` — a Windows-side file edit and a WSL restart, outside the reach of anything running inside WSL. Owned by E5 per AD-11; unblocks the pin moving to `kindest/node:v1.37.0` by digest.
 
 **Structural work E1 carries beyond its four FRs** (spine, PRD §9 "E1 grew in the architecture pass"):
 - Extract every SQL statement into `src/store/`, including the readiness probe's `SELECT 1` (`src/services/health.rs:59`) as `store::ping()`, so persist-before-cache ordering is enforceable rather than remembered (AD-2).
@@ -98,7 +99,7 @@ Technical requirements drawn from the architecture spine that shape stories but 
 - **AD-1** — `vpn_routes` is the sole authority; the routing table is a per-pod derived cache. Every control-plane read comes from the store; every write persists before it caches.
 - **AD-2** — No SQL reaches Postgres from outside `src/store/`. A handler may call the store then the cache, never the reverse. `network/router.rs` has no database knowledge and gains none.
 - **AD-3** — One failure taxonomy mapped at the store boundary into retryable / permanent / conflict; Go classifies only in `operator/internal/gateway`. An error is never rendered as an empty result.
-- **AD-4** — `proto/gateway.proto` and `.sqlx/` are generated artefacts that move in the same commit as their source. Go stubs are **committed** to `operator/internal/gatewaypb/`; `go build` and `go test` must never require `protoc`. `make check` runs the generators and fails on `git diff --exit-code`.
+- **AD-4** — `proto/gateway.proto` and `.sqlx/` are generated artefacts that move in the same commit as their source. Go stubs are **committed** to `operator/internal/gatewaypb/`; `go build` and `go test` must never require `protoc`. `make check` runs the generators and fails on `git diff --exit-code`. **Applied 2026-10-04:** `make check` regenerates only the artefacts that need no database (Go stubs, CRD, RBAC). `.sqlx/` is checked by a separate `make check-sqlx`, which needs Postgres (Story 1.2).
 - **AD-5** — `operator/internal/controller` must not import `google.golang.org/grpc`. Only `internal/gateway` dials, applies timeouts, or inspects a status code. Tests inject a counting fake.
 - **AD-6** — Connections use `grpc.NewClient`, never `grpc.Dial` with `WithBlock` (which would make operator startup depend on gateway availability); cached per `gatewayRef` for the process lifetime and reused.
 - **AD-7** — One-way dependency. The operator's only channel to tunnel state is the gRPC API; it never touches Postgres and never imports the generated stubs directly. The gateway never reads the Kubernetes API.
@@ -123,10 +124,10 @@ Technical requirements drawn from the architecture spine that shape stories but 
 **Overrides the spine applies to the PRD** — where a story must follow the spine, not the PRD text:
 | PRD says | Spine governs |
 |---|---|
-| §6: the cgroup host fix is "deliberately deferred" | AD-11: it is a prerequisite task owned by E5a |
+| §6: the cgroup host fix is "deliberately deferred" | AD-11: it is a prerequisite task owned by E5 |
 | §6 and `AGENTS.md`: Kubernetes **1.36+** refuses cgroup v1 | Factually wrong — the cutover is **1.35** (KEP-5573); v1.35.8 would also fail |
-| `AGENTS.md`: "use `log`, never `tracing`", "no new `println!`" | AD-9 — all three clauses are false today; `tracing` is the dependency |
-| `AGENTS.md`: leave the node image pinned at `v1.33.1` | AD-11 — retired once the host fix lands |
+| `AGENTS.md`: "use `log`, never `tracing`", "no new `println!`" | AD-9 — all three clauses are false today; `tracing` is the dependency. **Already corrected in `AGENTS.md` by 2026-10-04**: it now records `println!` as today's practice and AD-9 as the plan. Story 1.7 updates it again once E1 lands. |
+| `AGENTS.md`: leave the node image pinned at `v1.33.1` | AD-11 — retired once the host fix lands. `AGENTS.md` already states the 1.35 cutover correctly. |
 | FR-1, FR-2 marked `Delivered — no story` | AD-3 — E1 reopens both handlers to unify the taxonomy |
 
 **Concrete details the reconcile review flags as missing from the PRD, to be carried into acceptance criteria:**
@@ -135,7 +136,7 @@ Technical requirements drawn from the architecture spine that shape stories but 
 - **The demo beat is five seconds. CLOSED 2026-09-20.** UJ-2's "five-second proof" and the source notes agree; FR-30 and SM-1's "under ten seconds" is the drift. Acceptance criteria use **five**.
 - `examples/smoke_client.rs` already walks create → observe → delete → confirm gone → delete again; it is the skeleton of both the FR-30 demo and the FR-25 integration test. `examples/health_probe.rs` mirrors a Kubernetes `grpc:` probe.
 
-**Addendum §F, the brief for E6** — arguments the README and ADRs must make, not requirements: the liveness/readiness split is the strongest single item and was proved by observation; level-triggered convergence is the most important idea in the controller pattern and the one most often gotten wrong; finalizers are the concrete answer to "why can't you just watch for delete events"; periodic resync signals operational understanding because event-driven alone is the intuitive-but-wrong answer; `observedGeneration` is the smallest of the five but separates current status from stale. Plus the failure each delivered behaviour avoids (§F.1): `tonic_health` defaults `""` to SERVING unconditionally, and `PgPoolOptions::connect()` fails fast into CrashLoopBackOff where a readiness probe cannot help.
+**Addendum §F, the brief for E7** — arguments the README and ADRs must make, not requirements: the liveness/readiness split is the strongest single item and was proved by observation; level-triggered convergence is the most important idea in the controller pattern and the one most often gotten wrong; finalizers are the concrete answer to "why can't you just watch for delete events"; periodic resync signals operational understanding because event-driven alone is the intuitive-but-wrong answer; `observedGeneration` is the smallest of the five but separates current status from stale. Plus the failure each delivered behaviour avoids (§F.1): `tonic_health` defaults `""` to SERVING unconditionally, and `PgPoolOptions::connect()` fails fast into CrashLoopBackOff where a readiness probe cannot help.
 
 ### UX Design Requirements
 
@@ -164,13 +165,13 @@ All 24 `To build` FRs are mapped. The 10 `Delivered — no story` FRs are listed
 | FR-18 | **E4** | The `net.lilianmrt.dev/tunnel-cleanup` finalizer, added before external state |
 | FR-24 | **E4** | `envtest` coverage of the six named controller behaviours |
 | FR-25 | **E4** | `testcontainers-go` integration against a real Gateway and Postgres |
-| FR-12 | **E5a** | The Helm chart for Gateway, Postgres and the CRD; `k8s/` deleted (AD-8) |
-| FR-22 | **E5b** | Generated least-privilege RBAC on a dedicated ServiceAccount, cluster-wide (AD-11) |
-| FR-23 | **E5b** | The Operator's Deployment added to the chart, with FR-11 hardening |
-| FR-27 | **E5b** | The controller-runtime metrics endpoint, port declared on the pod spec |
-| FR-28 | **E6** | README: diagram, 60-second quickstart, the five ideas as standalone paragraphs |
-| FR-29 | **E6** | Two or three ADRs, each under a page, each naming its rejected alternative |
-| FR-30 | **E6** | The UJ-2 recording, restoration visible in five seconds, embedded in the README |
+| FR-12 | **E5** | The Helm chart for Gateway, Postgres and the CRD; `k8s/` deleted (AD-8) |
+| FR-22 | **E6** | Generated least-privilege RBAC on a dedicated ServiceAccount, cluster-wide (AD-11) |
+| FR-23 | **E6** | The Operator's Deployment added to the chart, with FR-11 hardening |
+| FR-27 | **E6** | The controller-runtime metrics endpoint, port declared on the pod spec |
+| FR-28 | **E7** | README: diagram, 60-second quickstart, the five ideas as standalone paragraphs |
+| FR-29 | **E7** | Two or three ADRs, each under a page, each naming its rejected alternative |
+| FR-30 | **E7** | The UJ-2 recording, restoration visible in five seconds, embedded in the README |
 
 **Not FR-derived, but scoped into epics because the work is real and otherwise unowned:**
 
@@ -178,17 +179,19 @@ All 24 `To build` FRs are mapped. The 10 `Delivered — no story` FRs are listed
 |---|---|---|
 | Extract all SQL into `src/store/`, including `store::ping()` | **E1** | AD-2 |
 | Replace every `println!` with `tracing`; add `tracing-subscriber` | **E1** | AD-9, Stack table |
-| Refresh `AGENTS.md` — three rules are false today | **E1** | Spine, *Where This Contradicts Its Inputs* |
+| Update `AGENTS.md` once E1 lands — `tracing` only, no SQL outside `src/store/` | **E1** | Spine, *Where This Contradicts Its Inputs* |
 | Install Go 1.27.1 — **performed by Lilian** | **E2** | Spine closing line |
 | `kubebuilder` scaffold at `operator/` | **E2** | PRD §8.1, notes M6 |
-| WSL cgroup v1 host fix — **performed by Lilian** | **E5a** | AD-11 |
-| Move the node image pin to `v1.37.0` by digest | **E5a** | AD-11 |
+| WSL cgroup v1 host fix — **performed by Lilian** | **E5** | AD-11 |
+| Move the node image pin to `v1.37.0` by digest | **E5** | AD-11 |
 
 **`Delivered — no story`:** FR-1, FR-2, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11. Note that E1 nonetheless reopens the FR-1 and FR-2 handlers, per AD-3 and AD-13 — the FRs stay Delivered; FR-31, FR-33 and FR-34 carry the amendments.
 
 ## Epic List
 
 Seven epics, following **PRD §9, which is the authority on sequence**. Each depends only on those before it, and none requires a later epic to function.
+
+**Dependency correction 2026-10-04 (final validation).** Two of §9's "depends on nothing" entries do not survive the stories. E2 depends on E1, because Story 2.3's CRD markers mirror the validation bounds Story 1.5 records (AD-15). E5 depends on E1 and E2, because Story 5.2 packages the CRD from Story 2.3 and seeds the `owner` column from Story 1.4. The order is unchanged. What is lost is §9's plan to build E5 alongside E1 in Phase A: E5 now follows E2.
 
 ### Epic 1: Durable actual-state reads
 *Rust · Phase A · depends on nothing*
@@ -200,7 +203,7 @@ The Gateway becomes a control-plane API an external reconciler can trust: a call
 **Note:** §9 warns this epic has grown past its weekend budget. It is the one place I would look first if the cut order is ever exercised.
 
 ### Epic 2: The `VpnTunnel` API
-*Go · Phase B · depends on nothing*
+*Go · Phase B · depends on E1 (Story 1.5's validation bounds)*
 
 A user can declare a Tunnel as a Kubernetes resource and have the API server reject it if it is wrong, before any controller sees it. `kubectl get vpntunnels` renders a useful table. Nothing reconciles yet — and that is a coherent stopping point, because the API is the contract everything downstream is written against.
 
@@ -222,24 +225,24 @@ The loop becomes a control plane rather than an apply-once tool: a route deleted
 **FRs covered:** FR-17, FR-18, FR-24, FR-25
 **Guardrail:** AD-14 — no reaper. SM-5 is satisfied by finalizers removing what they created, never by sweeping `ListRoutes` for unmatched rows.
 
-### Epic 5a: Package the Gateway
-*Phase A · depends on nothing*
+### Epic 5: Package the Gateway *(PRD E5a)*
+*depends on E1 (Story 1.4's schema), E2 (Story 2.3's CRD)*
 
 One command installs the Gateway, Postgres and the CRD into a clean cluster, and one removes them. The Makefile stays the human interface with Helm underneath it, and `k8s/` disappears.
 
 **FRs covered:** FR-12
 **Also carries:** the WSL cgroup fix (**performed by Lilian**), then moving the node image pin to `v1.37.0` by digest
-**Note:** buildable in Phase A alongside E1 because it packages the Gateway only. AD-8 has made this structural — cutting it now means reverting AD-8, not skipping an epic.
+**Note:** PRD §9 placed this in Phase A alongside E1. It can't stay there, because Story 5.2 ships the CRD and the `owner` schema, so it follows E2. Story 5.1 (the host fix) has no dependencies and can happen at any time. AD-8 has made this epic structural — cutting it now means reverting AD-8, not skipping an epic.
 
-### Epic 5b: Deploy the Operator
-*Phase B · depends on E4, E5a*
+### Epic 6: Deploy the Operator *(PRD E5b)*
+*Phase B · depends on E4, E5*
 
 The Operator runs in the cluster with exactly the permissions its markers declare and reports on itself while it does. After this epic the system runs unattended from a single install.
 
 **FRs covered:** FR-22, FR-23, FR-27
 
-### Epic 6: Legibility
-*Phase C · depends on E5b · realizes UJ-4*
+### Epic 7: Legibility *(PRD E6)*
+*Phase C · depends on E6 · realizes UJ-4*
 
 A reviewing engineer with four minutes and no context can tell what was built and why. README with the architecture on the first screen and a 60-second quickstart, ADRs for the three questions a reviewer would ask, and a recording where the restoration beat lands in five seconds.
 
@@ -313,10 +316,11 @@ So that persist-before-cache ordering is enforced by a module boundary instead o
 **When** `make prepare` is run and the image is then built with `SQLX_OFFLINE=true` and Postgres stopped,
 **Then** the build succeeds.
 
-**Given** the generated-artefact rule (AD-4),
-**When** `make check` is run,
+**Given** the generated-artefact rule (AD-4) and the fact that regenerating `.sqlx/` needs a live database,
+**When** `make check-sqlx` is run with Postgres up,
 **Then** it regenerates `.sqlx/` and fails on `git diff --exit-code`,
-**And** the check does not depend on CI, which is deferred.
+**And** `make check` stays runnable with Postgres stopped, as `AGENTS.md` promises, and does not touch `.sqlx/`,
+**And** neither check depends on CI, which is deferred.
 
 ### Story 1.3: Persist before caching on create
 
@@ -351,22 +355,43 @@ As the gateway's administrator,
 I want each route to record which `VpnTunnel` owns it,
 So that two resources declaring one local IP cannot upsert over each other, and a delete in one namespace cannot destroy another namespace's converged tunnel.
 
-*Realizes FR-34, governed by AD-13.*
+*Realizes FR-34, governed by AD-13. Decision 2026-10-04: an empty `owner` is rejected, not treated as an owner.*
 
 **Acceptance Criteria:**
 
 **Given** the schema seeded through the Postgres image's init hooks,
 **When** the seed is applied,
 **Then** `vpn_routes` carries an `owner` column holding `<namespace>/<name>`,
+**And** it is `TEXT NOT NULL`, not `VARCHAR(255)` like the columns beside it. `<namespace>/<name>` can be 317 characters (63 + 1 + 253), and a narrower column would turn a valid resource into a permanent `INVALID_ARGUMENT` that only delete-and-recreate fixes (AD-15),
 **And** it is added to the seed, not introduced as a `sqlx migrate` migration.
+
+**Given** the schema exists in two copies today — `migrations/01_init_routing_table.sql`, which local development applies with `make migrate`, and `k8s/12-configmap-initdb.yaml`, which seeds the cluster's Postgres,
+**When** the `owner` column is added,
+**Then** both copies change in the same commit and define identical columns,
+**And** `.sqlx/` is regenerated against a database that has the new column.
+
+**Given** existing databases built from the old schema — the local compose volume, on which sqlx has recorded a checksum for migration `01`, and the kind Postgres PVC, which init hooks never re-seed,
+**When** this story lands,
+**Then** the reset for each one is stated, and reachable through the Makefile or written in the story's completion notes (drop and recreate the local volume, delete the kind PVC and redeploy),
+**And** nobody is left facing a sqlx checksum mismatch or a Gateway querying a column that doesn't exist.
 
 **Given** `proto/gateway.proto`,
 **When** `TunnelRequest` and `DeleteTunnelRequest` gain an `owner` field,
 **Then** the regenerated artefacts land in the same commit as the `.proto` edit.
 
-**Given** a row that is unowned or already owned by the caller,
+**Given** a create or delete request whose `owner` is empty, which is the proto3 default every caller written before this story sends,
+**When** it reaches the Gateway,
+**Then** it returns `INVALID_ARGUMENT` before any write,
+**And** no row can ever be unowned, because AD-13 gives every row exactly one owner.
+
+**Given** `examples/smoke_client.rs`, whose request literals stop compiling once the messages gain a field,
+**When** this story lands,
+**Then** the smoke client sends a fixed owner on its create and on both deletes,
+**And** `make smoke` passes, because Stories 5.2 and 5.3 gate on it.
+
+**Given** no row for the local IP, or a row already owned by the caller,
 **When** `CreateVpnTunnel` is called,
-**Then** the row is claimed or updated.
+**Then** the row is created or updated.
 
 **Given** a row owned by a different `VpnTunnel`,
 **When** `CreateVpnTunnel` is called for that local IP,
@@ -419,9 +444,14 @@ So that retry policy can be decided once instead of being inferred from which RP
 **Then** it lives at the store boundary in exactly one place,
 **And** an RPC added later inherits the taxonomy without restating it.
 
+**Given** a database that accepts connections slowly or never,
+**When** a call waits on the pool,
+**Then** an acquire timeout set explicitly in `src/main.rs` expires and the call returns `UNAVAILABLE` (sqlx defaults to 30s and the pool sets none today),
+**And** that timeout is shorter than Story 3.1's default call deadline, so the operator sees `UNAVAILABLE` from the Gateway instead of hitting its own `DEADLINE_EXCEEDED` (Story 4.4 depends on this).
+
 **Given** the validation bounds the gateway enforces — `local_ip` is IPv4, `tunnel_id` and `remote_endpoint` are bounded at their column widths, `remote_endpoint` is `host:port`,
 **When** they are settled here,
-**Then** they are recorded explicitly so Story 2.2's CRD markers can mirror the same numbers,
+**Then** they are recorded explicitly so Story 2.3's CRD markers can mirror the same numbers,
 **And** the two validators cannot disagree (AD-15).
 
 ### Story 1.6: Read actual state from durable storage with `ListRoutes`
@@ -465,32 +495,38 @@ So that the reconciler's view of actual state does not depend on which pod answe
 **When** `ListRoutes` is called,
 **Then** it returns an empty list and OK — an error is never rendered as an empty result.
 
-### Story 1.7: Correct the three false rules in `AGENTS.md`
+**Given** a host shell and a running Gateway, and a Gateway that serves no gRPC reflection,
+**When** a person needs to see actual state,
+**Then** a small example client next to `examples/smoke_client.rs`, run through a Makefile target, prints every route `ListRoutes` returns,
+**And** Stories 3.2, 4.1 and 7.2 use this client rather than inventing their own.
+
+### Story 1.7: Bring `AGENTS.md` in line with the code E1 leaves behind
 
 As the next agent or human to open this repository,
 I want the written rules to match the code,
 So that instructions do not actively mislead whoever builds next.
 
-*The spine states plainly: "`AGENTS.md` must be refreshed when E1 lands; three of its rules are wrong today."*
+*The spine says `AGENTS.md` "must be refreshed when E1 lands". Its false rules about `log` and the 1.36 cutover have already been corrected (as of 2026-10-04). It now describes `println!` as today's practice and AD-9 as the plan, and that description stops being true once Story 1.1 lands.*
 
 **Acceptance Criteria:**
 
-**Given** the rule "Use the `log` crate — never `tracing`", which is false because `log` is not a dependency and `tracing` is,
-**When** `AGENTS.md` is refreshed,
-**Then** it states that `tracing` with `tracing-subscriber` is the logging path.
-
-**Given** the rule "no new `println!`", which understated the position,
-**When** the file is refreshed,
-**Then** it states that no `println!` exists at all and none may be added.
+**Given** the logging entry, which today says `println!` is used throughout and `tracing` is unused,
+**When** `AGENTS.md` is updated after Story 1.1,
+**Then** it says `tracing` with `tracing-subscriber` is the only logging path, no `println!` remains, and none may be added,
+**And** the sentence about how the earlier version was wrong is removed, since it no longer helps anyone reading.
 
 **Given** the SQL boundary established in Story 1.2,
-**When** the file is refreshed,
+**When** the file is updated,
 **Then** AD-2 is recorded as a rule: no SQL outside `src/store/`.
 
-**Given** the rule "leave the kind node image pinned at `v1.33.1`",
-**When** the file is refreshed,
+**Given** the `make check` / `make check-sqlx` split from Story 1.2,
+**When** the *Running and verifying* section is updated,
+**Then** it says which check needs Postgres and which does not.
+
+**Given** the pitfall about the kind node image pinned at `v1.33.1`,
+**When** the file is updated,
 **Then** the pin stays in place because the host fix has not been applied,
-**And** a note records that Story 5a.1 retires it.
+**And** a note records that Stories 5.1 (the host fix) and 5.3 (the pin move) retire it.
 
 ---
 
@@ -498,7 +534,7 @@ So that instructions do not actively mislead whoever builds next.
 
 A user can declare a Tunnel as a Kubernetes resource and have the API server reject it if it is wrong, before any controller sees it. `kubectl get vpntunnels` renders a useful table. Nothing reconciles yet — and that is a coherent stopping point, because this API is the contract everything downstream is written against.
 
-*Go · Phase B · depends on nothing · FR-13, FR-14 · AD-10, AD-15, conventions: Naming, Identity, Conditions*
+*Go · Phase B · depends on E1 (Story 1.5) · FR-13, FR-14 · AD-10, AD-15, conventions: Naming, Identity, Conditions*
 
 ### Story 2.1: Install the Go toolchain on this host
 
@@ -607,7 +643,7 @@ So that a malformed tunnel is rejected at `kubectl apply` and never reaches the 
 **Given** the CRD manifest generated by `controller-gen`,
 **When** it is produced,
 **Then** it lands under the scaffold's `config/crd/bases` and is applied with `kubectl`,
-**And** Story 5a.2 relocates it to `charts/netgw/crds/` when the chart exists.
+**And** Story 5.2 relocates it to `charts/netgw/crds/` when the chart exists.
 
 ### Story 2.4: See tunnel state from `kubectl get`
 
@@ -646,3 +682,767 @@ So that the state of every declared tunnel is one command away.
 **Given** a freshly applied resource that no controller has touched,
 **When** `kubectl get vpntunnels` is run,
 **Then** the table renders without error and the Ready column shows an unset state rather than a false positive.
+
+---
+
+## Epic 3: Converge a tunnel
+
+`kubectl apply` makes a tunnel real. The Operator reads actual state fresh, diffs it against the spec, creates what is missing, writes honest status, and says why when it cannot — without ever blocking a worker or caching what it saw. This is the first epic a user can demonstrate end to end.
+
+*Go · Phase B · depends on E1, E2 · realizes UJ-1 · FR-21, FR-15, FR-32, FR-16, FR-19, FR-20, FR-26 · AD-3, AD-4, AD-5, AD-6, AD-7, AD-10, AD-12, AD-14, AD-15*
+
+**Decisions 2026-10-04, binding on this epic:**
+- **Address resolution is injectable, and a dev-only flag exposes it.** AD-10's `<name>.<namespace>.svc.cluster.local:50051` stays the one in-cluster DNS construction and the default. `internal/gateway` accepts an injected resolver, which FR-25's `testcontainers-go` test needs regardless, and a `--gateway-address` flag lets an out-of-cluster operator reach the kind Gateway on `127.0.0.1:50051`. That is what makes UJ-1 demonstrable here rather than in E6.
+- **This epic's acceptance criteria are verified with controller-runtime's fake client and the counting gateway fake**, not `envtest`. No envtest binaries land against the 4 GB ceiling until E4, which builds the FR-24 suite on top.
+- **Known gap, accepted:** the finalizer is FR-18 in E4, so until it lands, deleting a `VpnTunnel` leaves its row in `vpn_routes`. AD-14 already treats an orphan row as a legitimate steady state.
+- **Known limit, accepted 2026-10-04:** `ListRoutes` carries no owner (AD-12). So a second `VpnTunnel` whose spec exactly matches the owner's sees an already-correct row, makes no write, and reports `Ready=True/Converged` without owning that row. Ownership conflicts only show up when the specs differ. If the owner is deleted, the tunnel is absent until the second resource's next resync claims it. `Converged` means the Gateway holds the declared route, not that this resource owns it.
+
+### Story 3.1: Reach a Gateway through one client boundary
+
+As the operator's author,
+I want every Gateway call to go through one package that owns addressing, timeouts and error classification,
+So that the reconciler can decide what to do about a failure without knowing it came over gRPC.
+
+*Realizes FR-21, governed by AD-3, AD-4, AD-5, AD-6, AD-10 and AD-12. Decision 2026-10-04: address resolution can be injected, and a dev-only flag exposes it.*
+
+**Acceptance Criteria:**
+
+**Given** `proto/gateway.proto`,
+**When** `make proto` runs,
+**Then** Go stubs are generated into `operator/internal/gatewaypb/` and committed,
+**And** `go build ./...` and `go test ./...` in `operator/` succeed on a machine without `protoc`.
+
+**Given** committed stubs that no longer match the `.proto`,
+**When** `make check` runs,
+**Then** it regenerates them and fails on `git diff --exit-code`,
+**And** it does so without a database, because `.sqlx/` is checked separately by `make check-sqlx` (Story 1.2).
+
+**Given** a host with `protoc` but without `protoc-gen-go` or `protoc-gen-go-grpc`, which Story 2.1 does not install,
+**When** `make proto` or `make check` runs,
+**Then** the Makefile installs both plugins at pinned versions into a project-local `bin/`, the way the scaffold handles `controller-gen`,
+**And** generation never depends on a plugin already installed on the host.
+
+**Given** a `gatewayRef` of `{name: gateway, namespace: netgw}`,
+**When** the default resolver runs,
+**Then** the address is `gateway.netgw.svc.cluster.local:50051`, with the port taken from a package constant,
+**And** no Kubernetes API read is made.
+
+**Given** the operator started with the dev flag `--gateway-address=127.0.0.1:50051`,
+**When** any `gatewayRef` is resolved,
+**Then** that address is used in its place,
+**And** the flag's help text and the code both say it exists only for running out of cluster, with the AD-10 DNS rule as the default.
+
+**Given** two resources naming the same `gatewayRef`,
+**When** both reconcile,
+**Then** one connection made with `grpc.NewClient` serves both and is reused for the life of the process,
+**And** nothing calls `grpc.Dial` or `WithBlock`, so the operator starts whether or not the Gateway is up.
+
+**Given** any `List`, `Create` or `Delete` call,
+**When** it is made,
+**Then** it carries a deadline whose default value is stated in the package and is longer than the Gateway's pool acquire timeout from Story 1.5,
+**And** a Gateway that accepts the connection and never answers produces a deadline error instead of a blocked worker.
+
+**Given** a gRPC status from the Gateway,
+**When** it is classified,
+**Then** `UNAVAILABLE`, `DEADLINE_EXCEEDED` and `INTERNAL` are retryable, `INVALID_ARGUMENT` is permanent, and `FAILED_PRECONDITION` is a conflict,
+**And** any code not listed here is retryable, so the loop never stops trying without saying why,
+**And** classification reads the status code and never the message text,
+**And** the typed error keeps the original code so it can be logged and shown in status.
+
+**Given** the package's interface,
+**When** `Create` or `Delete` is called,
+**Then** it takes the spec fields plus an owner of the form `<namespace>/<name>`,
+**And** `List` returns the package's own route type, never a `gatewaypb` type,
+**And** the mapping from `localIP` to `local_ip` (and the other field names) exists only in this package.
+
+**Given** `operator/internal/controller`,
+**When** its imports are checked,
+**Then** neither `google.golang.org/grpc` nor `internal/gatewaypb` appears.
+
+**Given** the counting fake shipped alongside the package,
+**When** a test uses it,
+**Then** it records the number of calls per method, keeps routes in memory, and can be told to return each error class.
+
+### Story 3.2: Converge a tunnel from whatever the Gateway reports
+
+As the gateway's administrator,
+I want `kubectl apply` of a `VpnTunnel` to make that tunnel exist on its Gateway,
+So that I declare tunnels instead of calling RPCs.
+
+*Realizes FR-15, FR-32, FR-16 and the namespace-and-name half of FR-26. Governed by AD-1, AD-5, AD-6, AD-7, AD-12 and AD-14. Until Story 4.2 adds the finalizer, deleting a `VpnTunnel` leaves its row behind. AD-14 treats that row as a legitimate steady state, not a defect.*
+
+**Acceptance Criteria:**
+
+**Given** the controller is registered,
+**When** a `VpnTunnel` is created, updated or deleted,
+**Then** a Reconcile runs for that resource and no other.
+
+**Given** a request for a `VpnTunnel` that no longer exists,
+**When** Reconcile runs,
+**Then** it returns no error,
+**And** the counting fake records zero Gateway calls.
+
+**Given** any pass,
+**When** Reconcile starts,
+**Then** it calls `List` before deciding anything,
+**And** two consecutive passes record two `List` calls.
+
+**Given** the reconciler and its package,
+**When** they are inspected,
+**Then** no struct field, package variable or cache holds Gateway-derived data beyond one Reconcile,
+**And** the connection cached in `internal/gateway` is exempt, because it is transport and not state (AD-6).
+
+**Given** no route for `spec.localIP`,
+**When** Reconcile runs,
+**Then** exactly one `Create` is made, carrying the owner `<namespace>/<name>`.
+
+**Given** a route whose `tunnel_id` or `remote_endpoint` differs from the spec,
+**When** Reconcile runs,
+**Then** exactly one `Create` is made, which upserts.
+
+**Given** a route that matches the spec on `tunnel_id` and `remote_endpoint` by exact string comparison,
+**When** Reconcile runs,
+**Then** the fake records zero `Create` and zero `Delete` calls.
+
+**Given** `List` returns routes for other local IPs, including ones no `VpnTunnel` declares,
+**When** Reconcile runs,
+**Then** it neither creates nor deletes anything for them, because a sibling or orphan row is outside the loop's remit (AD-14).
+
+**Given** each of the three starting states (absent, present but wrong, already correct),
+**When** one Reconcile runs,
+**Then** a following `List` shows the tunnel correct.
+
+**Given** any line logged during a reconcile,
+**When** it is emitted,
+**Then** it carries the resource's namespace and name, through the logger controller-runtime puts in the context.
+
+**Given** the gateway deployed on kind and the operator started by a Makefile target that runs it against the current kubeconfig with `--gateway-address=127.0.0.1:50051`,
+**When** a `VpnTunnel` manifest is applied,
+**Then** the row appears in the route listing from Story 1.6's client, which shows UJ-1 working end to end before the operator is deployed in E6.
+
+### Story 3.3: Report convergence honestly
+
+As the gateway's administrator,
+I want a `VpnTunnel` to show Ready only when its current spec has converged,
+So that I can tell current status from stale status.
+
+*Realizes FR-19's success path.*
+
+**Acceptance Criteria:**
+
+**Given** a pass that ends with the tunnel correct, whether it was just created or already matched,
+**When** status is written,
+**Then** `Ready` is `True` with reason `Converged`, set through `meta.SetStatusCondition`,
+**And** `status.observedGeneration` equals `metadata.generation`.
+
+**Given** a converged resource at generation N whose spec is then edited to generation N+1,
+**When** no pass has yet succeeded at N+1,
+**Then** `status.observedGeneration` stays at N.
+
+**Given** a pass that fails at any point,
+**When** it returns,
+**Then** `observedGeneration` has not moved.
+
+**Given** status that already matches what the pass would write,
+**When** Reconcile runs again,
+**Then** no status update is sent, so a converged resource does not trigger itself in a loop.
+
+**Given** any status write,
+**When** it is made,
+**Then** it goes through the status subresource and never through an update of the whole object.
+
+**Given** controller-runtime's fake client, which does not manage `generation`,
+**When** these criteria are tested,
+**Then** the tests set `generation` explicitly, and the envtest suite in E4 (FR-24) repeats the generation-lag check against a real API server.
+
+### Story 3.4: Fail legibly
+
+As the gateway's administrator,
+I want every failure to show its reason in `kubectl get` and to be retried only when retrying can fix it,
+So that a Gateway outage heals by itself and a bad spec does not spin forever.
+
+*Realizes FR-19's failure reasons, FR-20, and the gRPC-code half of FR-26. Governed by AD-3, AD-15, NFR3 and NFR7.*
+
+**Acceptance Criteria:**
+
+**Given** a retryable error from `List` or `Create`,
+**When** Reconcile handles it,
+**Then** `Ready` is `False` with reason `GatewayUnreachable` and the gRPC code in the message,
+**And** Reconcile returns the error, so controller-runtime applies exponential backoff.
+
+**Given** a Gateway that stays unreachable,
+**When** the operator keeps running,
+**Then** its logs show retries with growing gaps between them, not a tight loop,
+**And** no worker is ever blocked waiting.
+
+**Given** a permanent error (`INVALID_ARGUMENT`),
+**When** Reconcile handles it,
+**Then** `Ready` is `False` with reason `InvalidSpec`,
+**And** Reconcile returns no error and asks for no backoff retry, because retrying cannot fix the spec and the remedy is to delete and recreate it (AD-15),
+**And** from Story 4.1 onward the resource is still re-checked at the resync interval, which is a re-check and not a retry.
+
+**Given** a conflict error (`FAILED_PRECONDITION`),
+**When** Reconcile handles it,
+**Then** `Ready` is `False` with reason `OwnedByAnother` and a message naming the conflict,
+**And** nothing is retried with backoff and nothing changes at the Gateway.
+
+**Given** a Gateway that comes back after `GatewayUnreachable`,
+**When** the next backoff retry runs,
+**Then** `Ready` returns to `True/Converged` with no human action.
+
+**Given** any condition reason,
+**When** it is chosen,
+**Then** it comes from the typed error class in Story 3.1 and never from matching message text.
+
+**Given** a failed Gateway call,
+**When** it is logged,
+**Then** the gRPC code is a structured key on the line, not only text inside the message.
+
+**Given** `operator/internal/controller`,
+**When** it is searched for `time.Sleep`,
+**Then** there are no matches.
+
+---
+
+## Epic 4: Drift and deletion
+
+The loop becomes a control plane rather than an apply-once tool: a route deleted behind its back comes back within 30 seconds with no event involved, and deleting the resource actually deletes the tunnel instead of orphaning it. Verified against a real API server and a real Gateway.
+
+*Go · Phase B · depends on E3 · realizes UJ-2, UJ-3 · FR-17, FR-18, FR-24, FR-25 · AD-4, AD-5, AD-6, AD-13, AD-14*
+
+**Guardrail:** AD-14 — no reaper. SM-5 is satisfied by finalizers removing what they created, never by sweeping `ListRoutes` for unmatched rows.
+
+**Decision 2026-10-04:** FR-17's "every Reconcile returns a requeue-after" applies to permanent and conflict outcomes as well. They are re-checked at the resync interval, not retried under backoff, so an `OwnedByAnother` resource can take over its local IP once the rival's row is gone. Story 4.1 proves this by removing the row directly. Story 4.2 proves the path through `kubectl delete`, because the rival's row only goes away through its finalizer. Story 3.4's wording was amended to match.
+
+### Story 4.1: Correct drift on a timer
+
+As the gateway's administrator,
+I want every tunnel re-checked on a fixed schedule even when nothing in the cluster changes,
+So that a route removed behind the operator's back comes back without anyone noticing it was gone.
+
+*Realizes FR-17 and UJ-2. Governed by AD-6 and AD-14. Amends Story 3.4: permanent and conflict outcomes are re-checked at the resync interval instead of never.*
+
+**Acceptance Criteria:**
+
+**Given** a pass that converges, or that ends in `InvalidSpec` or `OwnedByAnother`,
+**When** Reconcile returns,
+**Then** it returns no error and a `RequeueAfter` equal to the resync interval.
+
+**Given** a pass that returns a retryable error,
+**When** Reconcile returns,
+**Then** controller-runtime's backoff governs the retry, and the resync interval does not shorten or replace it.
+
+**Given** the operator's flags,
+**When** it starts with no resync flag,
+**Then** the interval is 30 seconds,
+**And** a flag in the controller-runtime idiom changes it (E6 surfaces that flag as a Helm value).
+
+**Given** a converged tunnel deleted directly through the Gateway API, with no cluster event,
+**When** the next resync fires,
+**Then** the tunnel is re-created within 30 seconds,
+**And** the resource stays `Ready=True/Converged` throughout, so no status update is sent.
+
+**Given** a resource in `OwnedByAnother` whose rival's row is then removed with the owner-carrying delete client below, passing the rival's `<namespace>/<name>`,
+**When** the next resync fires,
+**Then** the resource claims the now-free local IP and reaches `Ready=True/Converged`,
+**And** this story does not rely on deleting the rival `VpnTunnel`, because until Story 4.2 adds the finalizer, that leaves the rival's row in place.
+
+**Given** a resync pass,
+**When** it runs,
+**Then** it issues its own `List` and looks only at its own `localIP`,
+**And** nothing in this story enumerates or deletes rows that no `VpnTunnel` declares (AD-14: no reaper).
+
+**Given** a host shell and a running Gateway,
+**When** a person needs to delete one route behind the operator's back,
+**Then** a small example client run through a Makefile target calls `DeleteVpnTunnel` with a local IP **and the owning resource's `<namespace>/<name>`**,
+**And** it requires the owner, because AD-13 makes a delete without the matching owner return `existed=false` and leave the row in place.
+
+**Given** the operator running out of cluster as in Story 3.2,
+**When** the UJ-2 sequence is performed by hand (apply, wait for Ready, delete with that client, then watch the Story 1.6 listing),
+**Then** restoration is visible within one interval.
+
+### Story 4.2: Remove tunnels through a finalizer
+
+As the gateway's administrator,
+I want `kubectl delete vpntunnel` to remove the tunnel from the Gateway before the resource disappears,
+So that deleting the declaration deletes what it declared.
+
+*Realizes FR-18 and UJ-3. Governed by AD-13 and AD-14. Closes the orphan gap Epic 3 accepted.*
+
+**Acceptance Criteria:**
+
+**Given** a resource without the finalizer,
+**When** Reconcile runs,
+**Then** `net.lilianmrt.dev/tunnel-cleanup` is added and persisted **before** any `Create` call,
+**And** a crash between the two cannot leave a tunnel with no finalizer guarding it.
+
+**Given** a resource that converged under Epic 3 and has no finalizer,
+**When** its next pass runs,
+**Then** the finalizer is added, with no other change.
+
+**Given** a resource with `deletionTimestamp` set,
+**When** Reconcile runs,
+**Then** it calls `Delete` with its `localIP` and owner, removes the finalizer once that succeeds, and returns,
+**And** it makes no `Create` call.
+
+**Given** a tunnel already gone from the Gateway, or a row owned by someone else,
+**When** the delete runs,
+**Then** the Gateway returns `success=true, existed=false`, and the finalizer is removed exactly as on a normal delete.
+
+**Given** a retryable error from `Delete`,
+**When** Reconcile handles it,
+**Then** `Ready` is `False` with reason `Deleting` and the gRPC code in the message,
+**And** the error is returned for backoff, the resource stays `Terminating`, and it completes on its own once the Gateway returns.
+
+**Given** a permanent error from `Delete`,
+**When** Reconcile handles it,
+**Then** the finalizer stays in place and `Ready=False/Deleting` gives the code and the reason,
+**And** the error is not swallowed so the object gets collected anyway.
+
+**Given** the deletion path,
+**When** it is inspected,
+**Then** it removes only this resource's own row, and never lists rows or deletes on behalf of other resources (AD-14).
+
+**Given** two `VpnTunnel` resources declaring one local IP, one `Ready=True/Converged` and the other `Ready=False/OwnedByAnother`,
+**When** the converged one is removed with `kubectl delete`,
+**Then** its finalizer removes its row,
+**And** on its next resync the other resource claims the local IP and reaches `Ready=True/Converged`, with no human action.
+
+### Story 4.3: Prove the loop against a real API server
+
+As the operator's author,
+I want the controller's named behaviours checked against a real API server,
+So that I'm testing status subresources, generations and finalizers as Kubernetes actually implements them, rather than as the fake client imitates them.
+
+*Realizes FR-24. Governed by AD-5. Contributes to SM-5.*
+
+**Acceptance Criteria:**
+
+**Given** an `envtest` API server loaded with the CRD generated in Story 2.3 and a reconciler wired to the counting fake,
+**When** the suite runs,
+**Then** it covers converge from absent, converge from wrong, no-op on already-correct, finalizer removal on delete, and `observedGeneration` lagging a spec edit until the next successful pass.
+
+**Given** a converged resource,
+**When** Reconcile is run repeatedly against it,
+**Then** the fake records no further `Create` or `Delete` calls (the idempotency assertion).
+
+**Given** a manifest that breaks Story 2.3's validation markers, such as a non-IPv4 `localIP` or a `localIP` edit,
+**When** it is submitted to the `envtest` API server,
+**Then** it is rejected, giving those markers their first automated check.
+
+**Given** the suite's end state,
+**When** every test has torn down,
+**Then** the fake holds no route without a matching `VpnTunnel`.
+
+**Given** a clean machine with no cluster,
+**When** the suite is run through a Makefile target,
+**Then** it passes, fetching the envtest binaries itself if they are missing,
+**And** it runs within the 4 GB ceiling with the kind cluster stopped.
+
+### Story 4.4: Prove the loop against a real Gateway
+
+As the operator's author,
+I want the client and the reconciler exercised against the real Gateway image and a real Postgres,
+So that the demo path is verified end to end, not only against a fake.
+
+*Realizes FR-25. Governed by AD-4, AD-5 and AD-6; uses the injectable resolver decided for Epic 3.*
+
+**Acceptance Criteria:**
+
+**Given** the Gateway image built by `make image` and Postgres 15 seeded through its init hooks with the Story 1.4 schema, read from `migrations/01_init_routing_table.sql` because Story 5.2 deletes `k8s/`,
+**When** the integration suite starts,
+**Then** `testcontainers-go` v0.44.0 runs both as containers,
+**And** `internal/gateway` reaches the Gateway through the injected resolver at the mapped host port.
+
+**Given** the real gRPC API,
+**When** the lifecycle test runs,
+**Then** it creates a tunnel, sees it in `ListRoutes`, deletes it, sees it gone, and deletes it again, getting `success=true, existed=false`.
+
+**Given** a tunnel converged by Reconcile, driven directly with the fake Kubernetes client,
+**When** it is deleted through the Gateway API, passing the resource's `<namespace>/<name>` as owner as AD-13 requires, and Reconcile runs again,
+**Then** the row was really gone before that pass, which the test checks with `ListRoutes`,
+**And** the tunnel is restored (the UJ-2 drift case).
+
+**Given** a Postgres container that is stopped, not paused, because a paused database holds connections open until the client's deadline fires and the test would see `DEADLINE_EXCEEDED`,
+**When** a create is sent,
+**Then** it returns `UNAVAILABLE` within the client's deadline,
+**And** `GetGatewayStatus` shows no route for that local IP (the FR-31 regression).
+
+**Given** `go test ./...` with no extra flags,
+**When** it is run,
+**Then** the integration suite is skipped, kept behind a build tag and its own Makefile target, so the default test run never needs Docker.
+
+**Given** the 4 GB ceiling,
+**When** the suite runs,
+**Then** it does so with the kind cluster stopped.
+
+---
+
+## Epic 5: Package the Gateway *(PRD E5a)*
+
+One command installs the Gateway, Postgres and the CRD into a clean cluster, and one removes them. The Makefile stays the human interface with Helm underneath it, and `k8s/` disappears.
+
+*depends on E1, E2 · FR-12 · AD-8, AD-11 · conventions: Schema, Secrets, Hermetic builds*
+
+**Also carries:** the WSL cgroup fix (**performed by Lilian**), then moving the node image pin to `v1.37.0` by digest. Story 5.2 does not depend on 5.1, so the chart is not blocked on the host change.
+
+**Decision 2026-10-04:** the schema stays seeded through the Postgres image's init hooks. The migration-Job question raised by PRD §6 and the spine's *Deferred* list is closed: a Job adds hooks, ordering and sqlx bookkeeping for no reader-visible gain, against SM-C1.
+
+### Story 5.1: Put this host on the unified cgroup hierarchy
+
+**⚠️ Performed by Lilian. No agent executes any step of this story.**
+
+As the builder,
+I want this WSL2 host to mount cgroup v2 only,
+So that Kubernetes 1.35 and later can boot here and the node image no longer has to be pinned to a version that is aging out.
+
+*AD-11 prerequisite, owned by E5. Overrides PRD §6's original deferral.*
+
+**Acceptance Criteria:**
+
+**Given** the Windows-side `%UserProfile%\.wslconfig`,
+**When** `kernelCommandLine = cgroup_no_v1=all` is added under `[wsl2]` and `wsl --shutdown` has been run,
+**Then** `/proc/cmdline` inside WSL contains `cgroup_no_v1=all`,
+**And** `/sys/fs/cgroup/cgroup.controllers` exists,
+**And** `mount -t cgroup` lists nothing, so no v1 hierarchy is left.
+
+**Given** Docker after the restart,
+**When** `docker info` is run,
+**Then** it reports `Cgroup Version: 2`.
+
+**Given** `wsl --shutdown` ends every running WSL session, including any agent session,
+**When** this story is scheduled,
+**Then** it happens at a natural stopping point with work committed.
+
+**Given** this story's nature as a host change,
+**When** it is picked up,
+**Then** no agent performs any part of it,
+**And** it is closed by Lilian confirming the verification commands above.
+
+### Story 5.2: Install the Gateway, Postgres and the CRD from one chart
+
+As the gateway's administrator,
+I want one command to install the whole system into a clean cluster and one to remove it,
+So that there is one documented way to deploy, and the Makefile and Helm don't each describe it differently.
+
+*Realizes FR-12, governed by AD-8 and AD-11. Does not depend on Story 5.1.*
+
+**Acceptance Criteria:**
+
+**Given** the manifests in `k8s/`,
+**When** they become `charts/netgw/templates/` in a chart with `apiVersion: v2`,
+**Then** the `k8s/` directory is removed in the same change,
+**And** `helm lint charts/netgw` passes.
+
+**Given** the chart's values,
+**When** they are read,
+**Then** the Gateway image tag and the Gateway replica count are values, not literals,
+**And** the replica count defaults to 1, with a comment that going above 1 needs PRD Q1 settled first (AD-11, Deferred).
+
+**Given** the `VpnTunnel` CRD from Story 2.3,
+**When** the operator's manifest generation runs,
+**Then** it writes the CRD into `charts/netgw/crds/`,
+**And** `make check` fails if the committed CRD is stale, following the AD-4 pattern.
+
+**Given** an empty kind cluster,
+**When** `make deploy` runs,
+**Then** it first runs `kubectl apply -f charts/netgw/crds/`, then `helm upgrade --install`,
+**And** a later change to the CRD reaches the cluster on the next `make deploy`, even though `helm upgrade` never updates `crds/`.
+
+**Given** the installed release,
+**When** it is compared with what the raw manifests produced,
+**Then** Postgres is a StatefulSet with a PVC behind a headless Service, the Gateway is a Deployment behind NodePort 30051, and `imagePullPolicy` is `IfNotPresent`,
+**And** `make smoke` and `make probe` pass against it,
+**And** deleting the Gateway pod produces a replacement that hydrates the same tunnels and becomes ready.
+
+**Given** the Postgres init hooks,
+**When** a fresh volume is seeded,
+**Then** the schema includes Story 1.4's `owner` column, applied through the init-hook ConfigMap and not as a migration.
+
+**Given** the Gateway pod rendered from the chart,
+**When** its spec is inspected,
+**Then** it carries the full FR-11 posture unchanged: explicit non-root uid, all capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp, read-only root filesystem.
+
+**Given** the Secret and the NetworkPolicies,
+**When** they are templated,
+**Then** the Secret is still labelled as a deliberately committed dev-only value,
+**And** the NetworkPolicies keep their header saying kind's CNI does not enforce them.
+
+**Given** an installed release,
+**When** `make undeploy` runs `helm uninstall`,
+**Then** no namespaced object remains apart from the Postgres PVC,
+**And** the CRD remains, because Helm never deletes `crds/`, and the Makefile help text says so.
+
+### Story 5.3: Pin the cluster to Kubernetes v1.37.0 by digest
+
+As the builder,
+I want the kind node image to match kubectl v1.37.0 and to be pinned by digest,
+So that client and server agree on the API, and the node image can't change under the same tag.
+
+*Governed by AD-11. Requires Story 5.1.*
+
+**Acceptance Criteria:**
+
+**Given** `kind/cluster.yaml`,
+**When** the pin moves,
+**Then** the node image is `kindest/node:v1.37.0@sha256:…`, with the digest taken from the kind v0.33.0 release notes.
+
+**Given** the comment above the pin,
+**When** it is rewritten,
+**Then** it states the 1.35 cutover (KEP-5573) instead of 1.36, says the host fix from Story 5.1 is applied and needed,
+**And** the cut-off sentence about loopback binding is finished.
+
+**Given** a recreated cluster,
+**When** `make cluster-down cluster-up load deploy` runs,
+**Then** the node reports v1.37.0, and `kubectl version` shows client and server both at v1.37.0,
+**And** `make smoke` and `make probe` pass.
+
+**Given** `AGENTS.md`'s pitfall about the node pin,
+**When** this story lands,
+**Then** that entry is replaced with the new pin and the host requirement it depends on.
+
+---
+
+## Epic 6: Deploy the Operator *(PRD E5b)*
+
+The Operator runs in the cluster with exactly the permissions its markers declare and reports on itself while it does. After this epic the system runs unattended from a single install.
+
+*Phase B · depends on E4, E5 · FR-22, FR-23, FR-27 · AD-8, AD-9, AD-10, AD-11 · NFR4, NFR5, NFR6, NFR8*
+
+**Decisions 2026-10-04, binding on this epic:**
+- **Events are emitted on `Ready` transitions** (Story 6.1). FR-22 grants event creation and requires every granted verb to back an identified operation, and until now no story emitted an Event.
+- **Metrics are served over plain HTTP with no authn/authz filter** (`--metrics-secure=false`), on a port nothing publishes. kubebuilder's secure default needs `tokenreviews` and `subjectaccessreviews` in the ClusterRole, which would break FR-22's "and nothing else". PRD §7 already excludes TLS and a production posture.
+
+### Story 6.1: Run with exactly the permissions the markers declare
+
+As the cluster's administrator,
+I want the Operator to hold exactly the permissions its code uses,
+So that the RBAC can be read as a precise list of what the Operator does.
+
+*Realizes FR-22, governed by AD-10 and AD-11.*
+
+**Acceptance Criteria:**
+
+**Given** the reconciler's kubebuilder RBAC markers,
+**When** `make manifests` generates RBAC,
+**Then** a `ClusterRole` grants `vpntunnels` (get, list, watch, update, patch), `vpntunnels/status` (get, update, patch) and events (create, patch), and nothing else,
+**And** the generated RBAC is written into the chart and checked for staleness by `make check`, following the AD-4 pattern.
+
+**Given** the kubebuilder scaffold's defaults,
+**When** RBAC is generated,
+**Then** the `vpntunnels/finalizers` marker is gone, because nothing here sets `blockOwnerDeletion`,
+**And** the leader-election Role is gone, because election is deferred and the Operator runs at `replicas: 1` (AD-11),
+**And** the metrics-auth rules for `tokenreviews` and `subjectaccessreviews` are gone, because metrics are served without the auth filter,
+**And** no rule touches Services, Endpoints or Secrets, because `gatewayRef` resolves by DNS (AD-10).
+
+**Given** each granted verb,
+**When** the markers are read,
+**Then** a comment next to each one names the operation that needs it: watch for the informer, update for the finalizer, status update for conditions, event create for transitions.
+
+**Given** a `Ready` condition that changes status or reason,
+**When** the reconciler writes it,
+**Then** it records an Event on the resource: `Normal` for `Converged`, `Warning` for every failure reason,
+**And** a pass that changes nothing records no Event, so a converged resource doesn't produce one every 30 seconds.
+
+**Given** the Operator's identity,
+**When** the chart's RBAC is rendered,
+**Then** a dedicated ServiceAccount is bound to the ClusterRole by a ClusterRoleBinding, and `default` is never used.
+
+### Story 6.2: Run the Operator in the cluster beside the Gateway
+
+As the gateway's administrator,
+I want `make deploy` to install the Operator with the Gateway and Postgres,
+So that the system runs unattended from a single install, with no process left running on my host.
+
+*Realizes FR-23, governed by AD-8, AD-10 and AD-11 and by NFR4, NFR5, NFR6 and NFR8.*
+
+**Acceptance Criteria:**
+
+**Given** an Operator Dockerfile,
+**When** the image is built,
+**Then** it needs no cluster and no `protoc`, both base images are pinned by digest, and the runtime image is distroless and runs as `nonroot`,
+**And** `make load` builds and side-loads the Gateway image and the Operator image in the same flow.
+
+**Given** the chart from Story 5.2,
+**When** the Operator is added to it,
+**Then** it is a Deployment at `replicas: 1` with `imagePullPolicy: IfNotPresent` and leader election off, using the ServiceAccount from Story 6.1,
+**And** the image tag and the resync interval are values, with the interval passed to Story 4.1's flag and defaulting to 30s.
+
+**Given** the Operator pod's spec,
+**When** it is inspected,
+**Then** it carries the same FR-11 posture as the Gateway: explicit non-root uid, all capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp, read-only root filesystem.
+
+**Given** the Operator's liveness and readiness probes, served by controller-runtime,
+**When** the Gateway is unreachable,
+**Then** liveness keeps passing, carrying NFR8's rule over to the Operator: a pod is never restarted because something it depends on is down.
+
+**Given** the Operator running in the cluster,
+**When** it resolves a `gatewayRef`,
+**Then** it uses the AD-10 DNS rule, and the dev-only `--gateway-address` flag is not set anywhere in the chart.
+
+**Given** `make deploy` on a clean cluster,
+**When** it completes,
+**Then** the CRD exists before the Operator pod starts, because `make deploy` applies `crds/` first,
+**And** applying a `VpnTunnel` with `gatewayRef: {name: gateway, namespace: netgw}` reaches `Ready=True/Converged` (UJ-1 working inside the cluster).
+
+**Given** the Operator pod's resource requests and limits,
+**When** the kind node, Postgres, the Gateway and the Operator run together,
+**Then** they fit within the 4 GB ceiling (NFR6), and the measured figure is recorded where the README can quote it.
+
+**Given** a code change to either program,
+**When** it is redeployed,
+**Then** one Makefile target loads the images and restarts both Deployments, so the fixed `:dev` tag can't leave the old binary running.
+
+### Story 6.3: Expose the controller's metrics
+
+As the operator's author,
+I want the standard controller-runtime metrics served from the Operator pod,
+So that the loop can be seen working: how often it reconciles, how often it fails, and how much work is queued.
+
+*Realizes FR-27. First in PRD §9's cut order.*
+
+**Acceptance Criteria:**
+
+**Given** the Operator's flags in the chart,
+**When** the metrics server starts,
+**Then** it serves plain HTTP with `--metrics-secure=false`, so FR-22's ClusterRole needs no metrics-auth rules.
+
+**Given** the Operator pod,
+**When** its spec is inspected,
+**Then** the metrics port is declared as a named `containerPort`.
+
+**Given** a running Operator that has reconciled at least one resource,
+**When** its metrics endpoint is scraped through the API-server proxy (`kubectl get --raw …/pods/<pod>:<port>/proxy/metrics`),
+**Then** `controller_runtime_reconcile_total`, `controller_runtime_reconcile_errors_total` and `workqueue_depth` are present for the `vpntunnel` controller.
+
+**Given** a Gateway made unreachable,
+**When** several passes have failed,
+**Then** the error counter has increased.
+
+**Given** the endpoint's exposure,
+**When** the chart is inspected,
+**Then** no Service, NodePort or host port publishes it, so it stays inside the cluster.
+
+---
+
+## Epic 7: Legibility *(PRD E6)*
+
+A reviewing engineer with four minutes and no context can tell what was built and why. README with the architecture on the first screen and a 60-second quickstart, ADRs for the three questions a reviewer would ask, and a recording where the restoration beat lands in five seconds.
+
+*Phase C · depends on E6 · realizes UJ-4 · FR-28, FR-29, FR-30 · AD-8, AD-11 · addendum §F is the brief*
+
+**Note:** §9 — never cut. An unbuilt FR costs less than an unreadable repo.
+
+**Decision 2026-10-04:** the demo is recorded with the chart's resync value set to **5s**, stated in a caption alongside the 30s default. Playback runs in real time with no editing, and the five-second beat holds. In UJ-2 the resource never leaves `Ready` and a re-create emits no Event, so the restoration is shown in a pane that polls `ListRoutes`, not in `kubectl get -w`.
+
+### Story 7.1: Publish the decisions as ADRs
+
+As a reviewing engineer,
+I want the three decisions I'd question written down with the alternatives that were rejected,
+So that I can see the choices were made deliberately.
+
+*Realizes FR-29. Source: the spine's `renderings/ADR-0001..0003`.*
+
+**Acceptance Criteria:**
+
+**Given** the three drafted ADRs (operator rather than CLI, Go operator with Rust gateway, periodic resync),
+**When** they are published under `docs/adr/`,
+**Then** each one states its rejected alternative in its own section and fits on one printed page.
+
+**Given** lines that were true when drafted and are stale now, such as ADR-0002's "Go must be installed… It currently is not",
+**When** they are published,
+**Then** every claim matches the repository as built,
+**And** anything that points into `_bmad-output/` is rewritten so it stands on its own, because a reviewer reads `docs/adr/` without the planning record.
+
+**Given** `docs/adr/`,
+**When** a reader opens it,
+**Then** an index lists the ADRs with one line each.
+
+### Story 7.2: Record the drift-correction demo
+
+As a reviewing engineer,
+I want to watch a tunnel deleted behind the Operator's back come back by itself,
+So that I've seen level-triggered reconciliation work, not just read a claim about it.
+
+*Realizes FR-30 and UJ-2; the evidence for SM-1. The demo beat is five seconds (closed 2026-09-20).*
+
+**Acceptance Criteria:**
+
+**Given** a host shell with the system deployed,
+**When** the demo needs to show and break actual state,
+**Then** it uses the listing client from Story 1.6 and the owner-carrying delete client from Story 4.1, and adds no new client,
+**And** the delete passes the demo resource's `<namespace>/<name>`, without which AD-13 leaves the row in place and nothing happens on screen.
+
+**Given** the recording,
+**When** it plays,
+**Then** it shows `kubectl apply`, the resource reaching `Ready=True/Converged`, an out-of-band delete, and the route reappearing in a pane that polls `ListRoutes`,
+**And** the gap between the delete and the visible restoration is at most five seconds of real-time playback, with the resync chart value set to 5s and a caption giving the 30s default,
+**And** because the worst case is one full resync plus one reconcile plus the pane's poll interval, a take that misses five seconds is re-recorded or the resync is set lower, and the caption states the value actually used,
+**And** the resource stays `Ready` throughout, so the recording shows that no event drove the repair.
+
+**Given** the recording file,
+**When** it is committed,
+**Then** it is a format GitHub renders inline, such as an asciinema session converted to GIF, kept to a size that renders quickly,
+**And** a script in the repository can re-record it from scratch.
+
+### Story 7.3: Rewrite the README for a four-minute reader
+
+As a reviewing engineer with four minutes and no context,
+I want the first screen to tell me what was built and show it working,
+So that I can describe the project after closing the tab.
+
+*Realizes FR-28 and UJ-4. Sources: the spine's `renderings/README-architecture-section.md`, addendum §F.*
+
+**Acceptance Criteria:**
+
+**Given** the README's first screen,
+**When** it renders on GitHub,
+**Then** it shows the mermaid architecture diagram (VpnTunnel → Operator → gRPC → Gateway → Postgres) and the embedded recording from Story 7.2,
+**And** the garbled "database's gateway" sentence from the draft is gone.
+
+**Given** the five control-plane ideas,
+**When** they are presented,
+**Then** each gets its own paragraph that can be read alone, not a table row,
+**And** they are weighted as §F.2 says, with level-triggered convergence first and `observedGeneration` presented as the smallest.
+
+**Given** the liveness/readiness split, which §F.2 calls the strongest single item,
+**When** it is described,
+**Then** the README states the failure it prevents, following §F.1: `tonic_health` reports SERVING unconditionally, `connect()` sends the pod into CrashLoopBackOff, and a restart storm follows.
+
+**Given** the quickstart,
+**When** a reader follows it,
+**Then** it uses only `make` targets (AD-8), lists its prerequisites (Docker, kind, kubectl, Helm, at stated versions), and reaches a converged `VpnTunnel` in under 60 seconds of commands.
+
+**Given** the NetworkPolicies,
+**When** the README mentions security posture,
+**Then** it says plainly that kind's CNI does not enforce them, and never describes `netgw` as isolated.
+
+**Given** the README as a whole,
+**When** it is checked against the repository,
+**Then** it describes no behaviour that isn't built, links the ADRs from Story 7.1, quotes the resource figure measured in Story 6.2, and replaces the current stack-list README.
+
+### Story 7.4: Prove the quickstart on a clean machine
+
+**⚠️ Performed by Lilian. No agent executes any step of this story.**
+
+As the builder,
+I want the quickstart run by following the README alone on an environment that has never seen this project,
+So that SM-2 is demonstrated rather than assumed.
+
+*Realizes FR-28's verification clause; the evidence for SM-2.*
+
+**Acceptance Criteria:**
+
+**Given** a fresh WSL distro with only Docker and a package manager, and the dev cluster stopped to stay under the 4 GB ceiling,
+**When** the README quickstart is followed exactly as written,
+**Then** a `VpnTunnel` reaches `Ready=True/Converged`,
+**And** the commands typed took under 60 seconds.
+
+**Given** any step the README did not mention,
+**When** it is found,
+**Then** it is fixed in the README and the run is repeated from scratch,
+**And** the story closes only on a run with no undocumented step.
+
+**Given** this story's nature as a host-level action,
+**When** it is picked up,
+**Then** no agent performs any part of it.

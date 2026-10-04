@@ -13,7 +13,9 @@ entries below record a decision taken there that the code does not yet reflect.
 
 ## Policy
 
-- Work lands on feature branches; never commit or push directly to `main`.
+- Work lands on feature branches; never commit or push directly to `main`. Planning artifacts
+  under `_bmad-output/` are lightweight: a short-lived `docs/` branch, no review cycle needed.
+- Branches reach `main` by rebase and fast-forward only — never a merge commit.
 - Never hand-edit `.sqlx/` — it is generated; regenerate with `make prepare`.
 - Credentials in `k8s/10-secret.yaml`, `compose.yaml`, and `.env.example` are deliberately
   committed dev values; never put a real secret in a tracked file.

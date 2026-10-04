@@ -1,0 +1,86 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 10-04-2026 12:11
+last_updated: 10-04-2026 12:11
+project: grpc_network_gateway
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-emit-every-gateway-log-line-through-tracing: backlog
+  1-2-move-every-sql-statement-behind-src-store: backlog
+  1-3-persist-before-caching-on-create: backlog
+  1-4-give-every-route-an-owner-and-scope-writes-to-it: backlog
+  1-5-return-one-failure-taxonomy-from-every-write-path: backlog
+  1-6-read-actual-state-from-durable-storage-with-listroutes: backlog
+  1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-install-the-go-toolchain-on-this-host: backlog
+  2-2-scaffold-the-operator-as-an-independent-go-module: backlog
+  2-3-declare-a-tunnel-as-a-vpntunnel-resource: backlog
+  2-4-see-tunnel-state-from-kubectl-get: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-reach-a-gateway-through-one-client-boundary: backlog
+  3-2-converge-a-tunnel-from-whatever-the-gateway-reports: backlog
+  3-3-report-convergence-honestly: backlog
+  3-4-fail-legibly: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-correct-drift-on-a-timer: backlog
+  4-2-remove-tunnels-through-a-finalizer: backlog
+  4-3-prove-the-loop-against-a-real-api-server: backlog
+  4-4-prove-the-loop-against-a-real-gateway: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-put-this-host-on-the-unified-cgroup-hierarchy: backlog
+  5-2-install-the-gateway-postgres-and-the-crd-from-one-chart: backlog
+  5-3-pin-the-cluster-to-kubernetes-v1-37-0-by-digest: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-run-with-exactly-the-permissions-the-markers-declare: backlog
+  6-2-run-the-operator-in-the-cluster-beside-the-gateway: backlog
+  6-3-expose-the-controller-s-metrics: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-publish-the-decisions-as-adrs: backlog
+  7-2-record-the-drift-correction-demo: backlog
+  7-3-rewrite-the-readme-for-a-four-minute-reader: backlog
+  7-4-prove-the-quickstart-on-a-clean-machine: backlog
+  epic-7-retrospective: optional
