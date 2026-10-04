@@ -48,11 +48,12 @@ entries below record a decision taken there that the code does not yet reflect.
 
 ## Conventions that differ from defaults
 
-- Logging is `println!` throughout today, and that is what the shipped code does. `tracing` is
-  declared in `Cargo.toml` but entirely unused, and the `log` crate is not a dependency at all.
-  (An earlier version of this file mandated `log` and forbade `tracing`; it was wrong on both
-  counts.) The binding plan is spine AD-9 — adopt `tracing` + `tracing-subscriber` and drop every
-  `println!` in one pass. Until that lands, match the surrounding code; do not add a third style.
+- Logging goes through `tracing` (spine AD-9). `src/logging.rs` installs a `tracing-subscriber`
+  `fmt` subscriber on stdout (filter from `RUST_LOG`, default `info`), and `main.rs` calls it
+  right after `dotenv()`. No `println!` remains under `src/`; do not add one, and do not add the
+  `log` crate. Put context in fields (`local_ip`, `code`, ...), not in the message. `examples/`
+  keep `println!` because that is CLI output for a person. Story 1.7 completes the refresh of
+  this file.
 - Tunnel writes update both the in-memory `RoutingTable` and the `vpn_routes` table; reads
   (`GetGatewayStatus`, `RoutePacket`) are served from that pod's memory alone. That is why the
   Deployment is `replicas: 1` — scaling up needs Postgres-backed reads first.

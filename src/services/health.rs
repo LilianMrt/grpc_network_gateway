@@ -19,6 +19,7 @@ use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
+use tracing::info;
 
 use crate::network::router::RoutingTable;
 use crate::services::gateway::hydrate;
@@ -60,7 +61,8 @@ pub fn spawn_readiness_task(
             } else {
                 match hydrate(&pool, &routing_table).await {
                     Ok(count) => {
-                        println!("health: hydrated {} route(s) from the database", count);
+                        // `count` stays in the message: the FR-10 demo quotes this literal text.
+                        info!(count, "hydrated {} route(s) from the database", count);
                         hydrated = true;
                         true
                     }
@@ -74,7 +76,7 @@ pub fn spawn_readiness_task(
 
             // Log transitions only, so a healthy server stays quiet.
             if last != Some(ready) {
-                println!("health: reporting {}", status);
+                info!(%status, "readiness status changed");
                 last = Some(ready);
             }
 

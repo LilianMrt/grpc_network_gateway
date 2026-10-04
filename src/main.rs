@@ -5,12 +5,14 @@ use std::time::Duration;
 use tonic::transport::Server;
 use tonic::server::NamedService;
 use tonic_health::ServingStatus;
+use tracing::info;
 
 use grpc_network_gateway::services::gateway::Gateway;
 use grpc_network_gateway::services::gateway::proto::gateway_controller_server::GatewayControllerServer;
 
 use sqlx::postgres::PgPoolOptions;
 
+use grpc_network_gateway::logging;
 use grpc_network_gateway::network::router::RoutingTable;
 use grpc_network_gateway::services::health;
 use grpc_network_gateway::services::health::{ LIVENESS, OVERALL };
@@ -20,6 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env for local runs. In a container the environment is already set,
     // so a missing file is not an error.
     let _ = dotenvy::dotenv();
+    // Right after .env, so a RUST_LOG set there applies, and before anything logs.
+    logging::init();
 
     let addr: SocketAddr = env
         ::var("BIND_ADDR")
@@ -30,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ::var("DATABASE_URL")
         .map_err(|_| "DATABASE_URL must be set (see .env.example)")?;
 
-    println!("gRPC Control Plane listening on {}", addr);
+    info!(%addr, "gRPC Control Plane listening");
 
     // Lazy: constructing the pool must not require Postgres to be up yet, so a
     // pod scheduled before its database reports not-ready instead of crashing.
