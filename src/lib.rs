@@ -4,5 +4,6 @@
 //! `tests/` directory can link against the same modules and generated
 //! protobuf types. Integration tests cannot reach into a binary target.
 
+pub mod logging;
 pub mod network;
 pub mod services;

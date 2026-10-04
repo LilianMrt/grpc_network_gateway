@@ -13,6 +13,7 @@ sqlx = { version = "0.9.0", default-features = false, features = ["macros", "pos
 tracing = "0.1"
 dotenvy = "0.15"
 tonic-health = "0.14"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"

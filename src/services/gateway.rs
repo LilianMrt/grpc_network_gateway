@@ -18,6 +18,7 @@ use proto::{
 };
 
 use sqlx::PgPool;
+use tracing::{ error, info, warn };
 
 /// Loads persisted routes into the in-memory table, returning how many were
 /// applied. Retryable: the routing table is replaced wholesale, so running this
@@ -29,11 +30,21 @@ pub async fn hydrate(pool: &PgPool, table: &RoutingTable) -> Result<usize, sqlx:
 
     let mut routes = HashMap::new();
     for row in records {
-        if let Ok(ip) = row.local_ip.parse::<Ipv4Addr>() {
-            routes.insert(ip, Route {
-                tunnel_id: row.tunnel_id,
-                remote_endpoint: row.remote_endpoint,
-            });
+        match row.local_ip.parse::<Ipv4Addr>() {
+            Ok(ip) => {
+                routes.insert(ip, Route {
+                    tunnel_id: row.tunnel_id,
+                    remote_endpoint: row.remote_endpoint,
+                });
+            }
+            Err(err) => {
+                warn!(
+                    local_ip = %row.local_ip,
+                    tunnel_id = %row.tunnel_id,
+                    error = %err,
+                    "skipping persisted route with unparseable local_ip"
+                );
+            }
         }
     }
 
@@ -61,14 +72,25 @@ impl GatewayController for Gateway {
         request: Request<TunnelRequest>
     ) -> Result<Response<TunnelResponse>, Status> {
         let payload = request.into_inner();
-        println!("Received request to create tunnel: {}", payload.tunnel_id);
+        info!(
+            local_ip = %payload.local_ip,
+            tunnel_id = %payload.tunnel_id,
+            "received request to create tunnel"
+        );
 
         let local_ip: Ipv4Addr = payload.local_ip
             .parse()
             .map_err(|err| {
-                Status::invalid_argument(
+                let status = Status::invalid_argument(
                     format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
-                )
+                );
+                warn!(
+                    local_ip = %payload.local_ip,
+                    code = ?status.code(),
+                    error = %err,
+                    "create rejected: invalid local_ip"
+                );
+                status
             })?;
 
         let route_config = Route {
@@ -90,7 +112,14 @@ impl GatewayController for Gateway {
         .execute(&self.db_pool)
         .await
         .map_err(|err| {
-            Status::internal(format!("Database persistence failure: {}", err))
+            let status = Status::internal(format!("Database persistence failure: {}", err));
+            error!(
+                %local_ip,
+                code = ?status.code(),
+                error = %err,
+                "create failed: database persistence failure"
+            );
+            status
         })?;
     
         let response = TunnelResponse {
@@ -110,15 +139,31 @@ impl GatewayController for Gateway {
         let local_ip: Ipv4Addr = payload.local_ip
             .parse()
             .map_err(|err| {
-                Status::invalid_argument(
+                let status = Status::invalid_argument(
                     format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
-                )
+                );
+                warn!(
+                    local_ip = %payload.local_ip,
+                    code = ?status.code(),
+                    error = %err,
+                    "delete rejected: invalid local_ip"
+                );
+                status
             })?;
 
         let result = sqlx
             ::query!("DELETE FROM vpn_routes WHERE local_ip = $1", payload.local_ip)
             .execute(&self.db_pool).await
-            .map_err(|err| { Status::internal(format!("Database delete failure: {}", err)) })?;
+            .map_err(|err| {
+                let status = Status::internal(format!("Database delete failure: {}", err));
+                error!(
+                    %local_ip,
+                    code = ?status.code(),
+                    error = %err,
+                    "delete failed: database delete failure"
+                );
+                status
+            })?;
 
         let existed = result.rows_affected() > 0;
         self.routing_table.remove_route(&local_ip).await;
@@ -128,7 +173,7 @@ impl GatewayController for Gateway {
         } else {
             format!("No tunnel for {}, nothing to delete", local_ip)
         };
-        println!("{}", status_message);
+        info!(%local_ip, existed, "tunnel delete handled");
 
         // Deleting an absent tunnel is success, not an error: a reconcile loop
         // converges toward a desired state and must be safe to run repeatedly.
@@ -157,15 +202,16 @@ impl GatewayController for Gateway {
 
         let action = match search_result {
             Some(route) => {
-                println!(
-                    "Forwarding packet via Tunnel '{}' to remote gateway: {}",
-                    route.tunnel_id,
-                    route.remote_endpoint
+                info!(
+                    %dest_ip,
+                    tunnel_id = %route.tunnel_id,
+                    remote_endpoint = %route.remote_endpoint,
+                    "forwarding packet via tunnel to remote gateway"
                 );
                 "FORWARDED".to_string()
             }
             None => {
-                println!("No route found for destination IP: {}. Dropping packet.", dest_ip);
+                info!(%dest_ip, "no route found for destination, dropping packet");
                 "DROPPED (NO_ROUTE)".to_string()
             }
         };
