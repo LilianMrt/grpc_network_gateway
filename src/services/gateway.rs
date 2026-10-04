@@ -17,16 +17,14 @@ use proto::{
     DeleteTunnelResponse,
 };
 
-use sqlx::PgPool;
+use crate::store::{ self, Store };
 use tracing::{ error, info, warn };
 
 /// Loads persisted routes into the in-memory table, returning how many were
 /// applied. Retryable: the routing table is replaced wholesale, so running this
 /// again after a failure is safe and converges on the database's contents.
-pub async fn hydrate(pool: &PgPool, table: &RoutingTable) -> Result<usize, sqlx::Error> {
-    let records = sqlx
-        ::query!("SELECT local_ip, tunnel_id, remote_endpoint FROM vpn_routes")
-        .fetch_all(pool).await?;
+pub async fn hydrate(store: &Store, table: &RoutingTable) -> Result<usize, store::Error> {
+    let records = store.list_routes().await?;
 
     let mut routes = HashMap::new();
     for row in records {
@@ -56,12 +54,12 @@ pub async fn hydrate(pool: &PgPool, table: &RoutingTable) -> Result<usize, sqlx:
 #[derive(Debug)]
 pub struct Gateway {
     pub routing_table: RoutingTable,
-    pub db_pool: PgPool
+    pub store: Store,
 }
 
 impl Gateway {
-    pub fn new(routing_table: RoutingTable, db_pool: PgPool) -> Self {
-        Self { routing_table, db_pool }
+    pub fn new(routing_table: RoutingTable, store: Store) -> Self {
+        Self { routing_table, store }
     }
 }
 
@@ -93,35 +91,28 @@ impl GatewayController for Gateway {
                 status
             })?;
 
+        // Store first, cache second: a failed write must leave the routing
+        // table untouched, or packets would route through a tunnel the client
+        // was told failed.
+        self.store
+            .upsert_route(&payload.local_ip, &payload.tunnel_id, &payload.remote_endpoint).await
+            .map_err(|err| {
+                let status = Status::internal(format!("Database persistence failure: {}", err));
+                error!(
+                    %local_ip,
+                    code = ?status.code(),
+                    error = %err,
+                    "create failed: database persistence failure"
+                );
+                status
+            })?;
+
         let route_config = Route {
             tunnel_id: payload.tunnel_id.clone(),
             remote_endpoint: payload.remote_endpoint.clone(),
         };
-
         self.routing_table.add_route(local_ip, route_config).await;
 
-        sqlx::query!(
-        "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint) 
-         VALUES ($1, $2, $3)
-         ON CONFLICT (local_ip) 
-         DO UPDATE SET tunnel_id = EXCLUDED.tunnel_id, remote_endpoint = EXCLUDED.remote_endpoint",
-        payload.local_ip,
-        payload.tunnel_id,
-        payload.remote_endpoint
-        )
-        .execute(&self.db_pool)
-        .await
-        .map_err(|err| {
-            let status = Status::internal(format!("Database persistence failure: {}", err));
-            error!(
-                %local_ip,
-                code = ?status.code(),
-                error = %err,
-                "create failed: database persistence failure"
-            );
-            status
-        })?;
-    
         let response = TunnelResponse {
             success: true,
             status_message: format!("Tunnel {} successfully created", payload.tunnel_id),
@@ -151,9 +142,8 @@ impl GatewayController for Gateway {
                 status
             })?;
 
-        let result = sqlx
-            ::query!("DELETE FROM vpn_routes WHERE local_ip = $1", payload.local_ip)
-            .execute(&self.db_pool).await
+        let existed = self.store
+            .delete_route(&payload.local_ip).await
             .map_err(|err| {
                 let status = Status::internal(format!("Database delete failure: {}", err));
                 error!(
@@ -165,7 +155,6 @@ impl GatewayController for Gateway {
                 status
             })?;
 
-        let existed = result.rows_affected() > 0;
         self.routing_table.remove_route(&local_ip).await;
 
         let status_message = if existed {

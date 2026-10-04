@@ -7,3 +7,4 @@
 pub mod logging;
 pub mod network;
 pub mod services;
+pub mod store;
