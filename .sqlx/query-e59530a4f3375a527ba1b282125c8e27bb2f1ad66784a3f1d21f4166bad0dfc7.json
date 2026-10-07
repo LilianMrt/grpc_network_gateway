@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint, owner)\n             VALUES ($1, $2, $3, $4)\n             ON CONFLICT (local_ip)\n             DO UPDATE SET tunnel_id = EXCLUDED.tunnel_id, remote_endpoint = EXCLUDED.remote_endpoint\n             WHERE vpn_routes.owner = EXCLUDED.owner",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e59530a4f3375a527ba1b282125c8e27bb2f1ad66784a3f1d21f4166bad0dfc7"
+}

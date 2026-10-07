@@ -22,6 +22,17 @@ db-down: ## Stop the local Postgres
 migrate: ## Apply database migrations
 	sqlx migrate run
 
+# The schema is seeded by migration 01, edited in place, and sqlx stores its
+# checksum, so an existing database cannot be migrated forward: drop the volume.
+# pg_isready goes over TCP because the image's init-phase server listens on the
+# socket only, so a socket check passes before the real server is up.
+.PHONY: db-reset
+db-reset: ## Recreate the local Postgres from scratch and migrate (destroys its data)
+	docker compose down -v
+	docker compose up -d
+	@until docker compose exec -T postgres pg_isready -h 127.0.0.1 -q; do sleep 1; done
+	sqlx migrate run
+
 .PHONY: prepare
 prepare: ## Regenerate .sqlx offline data (needs a running database)
 	cargo sqlx prepare -- --all-targets
@@ -87,6 +98,16 @@ deploy: ## Apply the manifests to the kind cluster
 .PHONY: undeploy
 undeploy: ## Remove the netgw namespace and everything in it
 	kubectl delete namespace netgw --ignore-not-found
+
+# The initdb ConfigMap runs only against an empty data directory, so a schema
+# change needs a fresh PVC. The gateway hydrates only at startup, so restart it
+# once the new database is in place.
+.PHONY: cluster-db-reset
+cluster-db-reset: ## Recreate the cluster Postgres and its PVC, then restart the gateway (destroys its data)
+	kubectl delete statefulset postgres -n netgw --ignore-not-found
+	kubectl delete pvc data-postgres-0 -n netgw --ignore-not-found
+	kubectl apply -f k8s/
+	kubectl rollout restart deployment/gateway -n netgw
 
 .PHONY: status
 status: ## Show what is running in the netgw namespace
