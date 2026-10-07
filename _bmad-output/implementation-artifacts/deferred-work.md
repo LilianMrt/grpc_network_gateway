@@ -75,3 +75,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
   summary: AGENTS.md still says there is no test suite and make check is the only automated verification, though make test runs the crate's unit tests.
   evidence: Triage #25. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-read-actual-state-from-durable-storage-with-listroutes.md`
+  summary: ListRoutes inherits the unbounded post-acquire query time, so a SELECT waiting on a lock hangs the polling reconciler or surfaces as its own DEADLINE_EXCEEDED instead of a retryable UNAVAILABLE.
+  evidence: Triage #3. The handler awaits Store::list_routes with only the 5s acquire bound; same root as the 1.5 statement_timeout deferral, now on the read every reconcile pass depends on.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-read-actual-state-from-durable-storage-with-listroutes.md`
+  summary: Nothing repeatable proves ListRoutes follows the database when the serving pod's cache differs on the success path; a handler that checked the store and then served the cache would pass make test and make smoke.
+  evidence: Triage #12 (verification-gap, pre-verified). Unit tests reach only the database-down path; smoke's cache and DB agree at every ListRoutes check. Covered only by the manual two-gateway check. Needs the DB-backed harness (#[sqlx::test] or a Store seam) deferred in 1.4/1.5.
