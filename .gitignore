@@ -7,3 +7,4 @@ _bmad/*
 !_bmad/custom/
 _bmad/custom/*
 !_bmad/custom/config.toml
+!_bmad/custom/bmad-build.toml
