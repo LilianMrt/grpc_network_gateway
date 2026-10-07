@@ -29,13 +29,13 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-04-2026 12:11
-last_updated: 10-07-2026 12:27
+last_updated: 10-07-2026 12:39
 project: grpc_network_gateway
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: done
+  epic-1: in-progress
   1-1-emit-every-gateway-log-line-through-tracing: done
   1-2-move-every-sql-statement-behind-src-store: done
   1-3-persist-before-caching-on-create: done
@@ -43,7 +43,10 @@ development_status:
   1-5-return-one-failure-taxonomy-from-every-write-path: done
   1-6-read-actual-state-from-durable-storage-with-listroutes: done
   1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind: done
-  epic-1-retrospective: optional
+  1-8-bound-what-a-tunnel-identifier-and-an-owner-may-contain: backlog
+  1-9-expose-route-ownership-on-listroutes: backlog
+  1-10-prove-the-store-s-sql-against-a-real-database: backlog
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-install-the-go-toolchain-on-this-host: backlog
@@ -84,3 +87,68 @@ development_status:
   7-3-rewrite-the-readme-for-a-four-minute-reader: backlog
   7-4-prove-the-quickstart-on-a-clean-machine: backlog
   epic-7-retrospective: optional
+action_items:
+  - id: "epic-1-retro-item-1-decide-how-a-reconciler-sees-ownership-o"
+    epic: 1
+    action: "Decide how a reconciler sees ownership (owner on Route, or always call
+      Create) before Story 3.2; record in AD-12/AD-13 and 3.2 ACs"
+    owner: "Lilian"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-2-before-story-2-3-reject-nul-cr-lf-contro"
+    epic: 1
+    action: "Before Story 2.3, reject NUL/CR/LF (control chars) in tunnel_id and owner;
+      add the bound to the five-place list so the CRD mirrors it"
+    owner: "Lilian (decide) / dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-3-offline-tests-schema-copies-identical-wi"
+    epic: 1
+    action: "Offline tests: schema copies identical with widths equal to consts, malformed/non-canonical
+      local_ip handler tests, bounded failing-store latency"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-4-schedule-a-db-backed-test-harness-story"
+    epic: 1
+    action: "Schedule a DB-backed test harness story covering create success, OwnedByAnother,
+      concurrent foreign creates, ListRoutes vs cache"
+    owner: "Lilian"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-5-when-statement_timeout-lands-classify-57"
+    epic: 1
+    action: "When statement_timeout lands, classify 57014/40001/40P01/55P03/25006
+      as Unavailable and flip the pinned 57014 test; consider a separate readiness
+      connection"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-6-comment-fixes-proto-listroutes-ceiling-3"
+    epic: 1
+    action: "Comment fixes: proto ListRoutes ceiling ~3,000 routes, kind/cluster.yaml
+      header names list_routes.rs, AGENTS.md hydrate() location"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-7-decide-who-moves-stories-from-review-to"
+    epic: 1
+    action: "Decide who moves stories from review to done and when, so sprint status
+      is true during an epic"
+    owner: "Lilian"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-8-add-a-resolution-marker-to-deferred-work"
+    epic: 1
+    action: "Add a resolution marker to deferred-work.md and apply the retro ledger
+      (10 resolved, 3 partial, 16 open)"
+    owner: "Lilian"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"
+  - id: "epic-1-retro-item-9-rule-an-item-deferred-a-second-time-gets"
+    epic: 1
+    action: "Rule: an item deferred a second time gets its own story or an explicit
+      accept"
+    owner: "Lilian"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-07.md"

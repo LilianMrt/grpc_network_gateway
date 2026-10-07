@@ -114,7 +114,7 @@ Kubernetes is the one skill claimed on the CV with nothing behind it: the real e
 - A new `ListRoutes` RPC returns all rows of `vpn_routes`, independent of which pod serves the call and of whether that pod has hydrated.
 - With two Gateway pods and a Tunnel created through pod A, `ListRoutes` served by pod B returns that Tunnel.
 - An unreachable database returns `UNAVAILABLE`, distinguishable by the Operator from "no Tunnels exist" — which would otherwise read as total Drift and trigger a storm of re-creates.
-- The response is a dedicated three-field `Route` message — `local_ip`, `tunnel_id`, `remote_endpoint` — keyed on local IP, and **not** the shipped `RouteDetails` (which is keyed `destination_ip` and belongs to `GetGatewayStatus`). Bookkeeping columns — `id`, `created_at`, `owner` — are not on the wire, so a whole-message comparison cannot make an already-correct Tunnel look like Drift (AD-12).
+- The response is a dedicated four-field `Route` message — `local_ip`, `tunnel_id`, `remote_endpoint`, `owner` — keyed on local IP, and **not** the shipped `RouteDetails` (which is keyed `destination_ip` and belongs to `GetGatewayStatus`). Bookkeeping columns — `id`, `created_at` — are not on the wire, so a comparison cannot make an already-correct Tunnel look like Drift (AD-12). `[Amended 2026-10-07: owner added, Epic 1 retro F-5.]`
 
 **Notes:** `[NOTE FOR PM: this FR is the reason the Operator can trust its actual-state read. GetGatewayStatus (FR-4) cannot serve this purpose and must not be substituted for it.]`
 
@@ -148,6 +148,7 @@ Kubernetes is the one skill claimed on the CV with nothing behind it: the real e
 - `DeleteVpnTunnel` removes only a row it owns. Deleting a `VpnTunnel` in one namespace leaves another namespace's Tunnel on the same local IP untouched.
 - Deleting when the caller owns nothing still returns `success=true, existed=false` — FR-2's idempotency is unchanged.
 - The conflict surfaces as a permanent `Ready=False` reason, not a retry.
+- `ListRoutes` returns each row's `owner`, so the Operator sees a conflict on read, before any write. `[Added 2026-10-07.]`
 
 **Notes:** `[NOTE FOR PM: found by adversarial review of the architecture spine. Without it, §10's SM-5 is violated in the cross-namespace case — a delete silently destroys a converged Tunnel belonging to someone else. Governed by AD-13.]`
 

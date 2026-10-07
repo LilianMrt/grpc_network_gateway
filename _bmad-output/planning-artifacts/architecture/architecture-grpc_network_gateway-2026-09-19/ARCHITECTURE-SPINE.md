@@ -227,19 +227,23 @@ on behalf of a handler or of hydration.
     toolchain, a second image, the operator pod, `envtest` and `testcontainers-go` all land against
     that ceiling. Stop `rust-analyzer` before creating a cluster.
 
-### AD-12 — `ListRoutes` returns a dedicated message, and equality is over two fields
+### AD-12 — `ListRoutes` returns a dedicated message, and equality is over named fields
 
 - **Binds:** FR-3, FR-16, FR-32
 - **Prevents:** the Rust builder returning the shipped `RouteDetails` (keyed `destination_ip`, and
   tempting to extend with `created_at` or `owner` since the table is the authority) while the Go
   builder compares whole messages — which makes every pass a write and fails FR-16's call-count
   assertion outright.
-- **Rule:** `ListRoutes` returns `repeated Route`, a **new** message with exactly three fields:
-  `local_ip`, `tunnel_id`, `remote_endpoint`. It is keyed `local_ip`, not `destination_ip`; the
-  shipped `RouteDetails` is left alone, because it belongs to `GetGatewayStatus`, which is a
-  different surface (AD-1). Columns that exist for bookkeeping — `id`, `created_at`, `owner` — are
-  **not** on the wire. "Already correct" is exact string comparison over `tunnel_id` and
-  `remote_endpoint` only.
+- **Rule:** `ListRoutes` returns `repeated Route`, a **new** message with exactly four fields:
+  `local_ip`, `tunnel_id`, `remote_endpoint`, `owner`. It is keyed `local_ip`, not
+  `destination_ip`; the shipped `RouteDetails` is left alone, because it belongs to
+  `GetGatewayStatus`, which is a different surface (AD-1). Columns that exist for bookkeeping —
+  `id`, `created_at` — are **not** on the wire. "Already correct" means `owner` equals the caller's
+  `<namespace>/<name>` **and** `tunnel_id` and `remote_endpoint` equal the spec, by exact string
+  comparison. A row whose values match but whose `owner` differs is a conflict (AD-13), not
+  convergence. *(Amended 2026-10-07, Epic 1 retro F-5: `owner` was off the wire until then. On a
+  caller's own rows `owner` always equals the caller, so it can never make a correct Tunnel look
+  like drift; `id` and `created_at` can, which is why they stay off.)*
 
 ### AD-13 — Every row has one owner; deletes are owner-scoped
 
@@ -252,7 +256,8 @@ on behalf of a handler or of hydration.
   unowned row or updates its own, and returns `FAILED_PRECONDITION` when a different owner holds it.
   `DeleteVpnTunnel` removes only a row it owns, and still returns `success=true, existed=false`
   when there is nothing of its own to delete — FR-2's idempotency is unchanged. A conflicting owner
-  surfaces as a permanent `Ready=False` reason, not a retry.
+  surfaces as a permanent `Ready=False` reason, not a retry — visible either from Create's
+  `FAILED_PRECONDITION` or, without any write, from the `owner` that `ListRoutes` returns (AD-12).
 
 ### AD-14 — An orphan row is a legitimate steady state, not drift
 
@@ -272,8 +277,11 @@ on behalf of a handler or of hydration.
   `Ipv4Addr::from_str`, and the schema's `VARCHAR(255)` — letting a 300-character `tunnelID` pass
   `kubectl apply`, fail in Postgres as `22001`, map to `INTERNAL`, and retry forever.
 - **Rule:** the CRD's markers are the authoritative statement of what is valid, and the gateway
-  mirrors the same bounds: `local_ip` is IPv4, `tunnel_id` and `remote_endpoint` are bounded at the
-  column width, `remote_endpoint` is `host:port`. Any value that reaches the database and violates a
+  mirrors the same bounds: `local_ip` is IPv4; `tunnel_id` matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`
+  and is 1 to 255 characters (the column width); `remote_endpoint` is `host:port`, at most 255
+  characters. The gateway additionally bounds `owner`, which no CRD field carries: non-empty, at
+  most 317 characters, no control characters (U+0000–U+001F, U+007F–U+009F) *(amended 2026-10-07,
+  Epic 1 retro F-9)*. Any value that reaches the database and violates a
   constraint is a **permanent** error (AD-3), never a retryable one. Because `localIP` is immutable
   (FR-13), a resource that fails gateway-side validation can only be fixed by delete-and-recreate —
   so the two validators must not disagree.
