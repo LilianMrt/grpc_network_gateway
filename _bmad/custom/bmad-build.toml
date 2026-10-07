@@ -1,0 +1,4 @@
+[workflow]
+persistent_facts = [
+  """Tests are never deleted, skipped, or weakened without the human's decision. "Weakened" covers removing a test function or an assertion, removing a check from an examples/ smoke client, adding #[ignore], and loosening an assertion. The rule holds in every step: implementation, review patches, and loopbacks. When any step would remove or weaken a test, including a review finding that calls a test redundant, duplicate, or unable to fail, do not apply it and never route it as patch. HALT and present the decision to the human with: the test (file:line), the finding verbatim, the agent's case for removing it, the case for keeping it, and a non-destructive alternative (strengthen or merge the test). Apply only what the human chooses, and record the decision and its reasoning in the spec's Review Triage Log. Every handoff or re-engagement message to an implementation subagent includes this rule verbatim.""",
+]
