@@ -200,7 +200,7 @@ impl GatewayController for Gateway {
         let status_message = if existed {
             format!("Tunnel for {} deleted", local_ip)
         } else {
-            format!("No tunnel for {}, nothing to delete", local_ip)
+            format!("No tunnel for {} owned by {}, nothing to delete", local_ip, payload.owner)
         };
         info!(%local_ip, owner = %payload.owner, existed, "tunnel delete handled");
 

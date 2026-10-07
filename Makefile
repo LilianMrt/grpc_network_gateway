@@ -26,11 +26,16 @@ migrate: ## Apply database migrations
 # checksum, so an existing database cannot be migrated forward: drop the volume.
 # pg_isready goes over TCP because the image's init-phase server listens on the
 # socket only, so a socket check passes before the real server is up.
+# A running gateway must be restarted afterwards: it hydrates only at startup.
 .PHONY: db-reset
 db-reset: ## Recreate the local Postgres from scratch and migrate (destroys its data)
 	docker compose down -v
 	docker compose up -d
-	@until docker compose exec -T postgres pg_isready -h 127.0.0.1 -q; do sleep 1; done
+	@for i in $$(seq 60); do \
+	  docker compose exec -T postgres pg_isready -h 127.0.0.1 -q && exit 0; \
+	  sleep 1; \
+	done; \
+	echo "db-reset: Postgres not ready after 60s" >&2; exit 1
 	sqlx migrate run
 
 .PHONY: prepare
@@ -107,7 +112,9 @@ cluster-db-reset: ## Recreate the cluster Postgres and its PVC, then restart the
 	kubectl delete statefulset postgres -n netgw --ignore-not-found
 	kubectl delete pvc data-postgres-0 -n netgw --ignore-not-found
 	kubectl apply -f k8s/
+	kubectl rollout status statefulset/postgres -n netgw
 	kubectl rollout restart deployment/gateway -n netgw
+	kubectl rollout status deployment/gateway -n netgw
 
 .PHONY: status
 status: ## Show what is running in the netgw namespace
