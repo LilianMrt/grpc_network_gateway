@@ -1,7 +1,8 @@
 syntax = "proto3";
 package grpc.connectivity;
 
-// Every write RPC fails with one of these codes, the same on every RPC:
+// Every write RPC, and ListRoutes, fails with one of these codes, the same on
+// every RPC:
 //   UNAVAILABLE          the database cannot be reached, including a pool
 //                        acquire timeout (5s). Retryable.
 //   INVALID_ARGUMENT     a field breaks the bounds below, checked before any
@@ -11,11 +12,21 @@ package grpc.connectivity;
 //                        resource. A foreign-owner delete is not an error; it
 //                        succeeds with existed = false.
 //   INTERNAL             anything unexpected.
+// ListRoutes normally fails UNAVAILABLE or INTERNAL. Callers must treat any
+// non-OK status as "actual state unknown", never as an empty list: an empty
+// list means the database answered and holds no routes.
+//
+// vpn_routes is the only authority on which tunnels exist. ListRoutes reads it
+// directly and is the actual state a reconciler must use. GetGatewayStatus and
+// RoutePacket read the serving pod's in-memory cache, which can lag or differ
+// between pods: GetGatewayStatus is a pod-local debug view, never a stand-in
+// for ListRoutes.
 service GatewayController {
   rpc CreateVpnTunnel (TunnelRequest) returns (TunnelResponse);
   rpc RoutePacket (PacketRequest) returns (PacketResponse);
   rpc DeleteVpnTunnel (DeleteTunnelRequest) returns (DeleteTunnelResponse);
   rpc GetGatewayStatus (StatusRequest) returns (StatusResponse);
+  rpc ListRoutes (ListRoutesRequest) returns (ListRoutesResponse);
 }
 
 // Bounds are the vpn_routes column widths, counted in characters (Postgres
@@ -79,4 +90,26 @@ message RouteDetails {
 
 message StatusResponse {
   repeated RouteDetails active_routes = 1;
+}
+
+message ListRoutesRequest {}
+
+// Every row of vpn_routes, in no particular order: callers key on local_ip,
+// which is unique, so there is at most one Route per local_ip. There is no
+// pagination: everything comes in one message, so it is subject to the
+// client's decode limit (tonic default 4 MiB, roughly 7,000 routes at maximum
+// field widths). Raise max_decoding_message_size if that is ever reached.
+message ListRoutesResponse {
+  repeated Route routes = 1;
+}
+
+// One persisted route, each field copied verbatim from its vpn_routes row. No
+// field is parsed or normalised, and no row is filtered out. A route is
+// "already correct" when tunnel_id and remote_endpoint both equal the desired
+// values by exact string comparison; nothing else is compared. Ownership and
+// bookkeeping columns are not exposed.
+message Route {
+  string local_ip = 1;
+  string tunnel_id = 2;
+  string remote_endpoint = 3;
 }

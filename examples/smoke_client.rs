@@ -3,21 +3,49 @@
 //!   cargo run --example smoke_client
 //!
 //! Exercises the reconciliation primitives an operator depends on: create a
-//! tunnel, observe it in the gateway's reported state, confirm another owner
+//! tunnel, observe it both in the gateway's reported state and in the durable
+//! actual state `ListRoutes` returns, update it in place, confirm another owner
 //! can neither overwrite nor delete it, confirm a malformed request is refused
-//! before any write, delete it, and confirm the delete is
-//! idempotent when repeated against an already-absent tunnel.
+//! before any write, delete it and confirm `ListRoutes` no longer lists it, and
+//! confirm the delete is idempotent when repeated against an already-absent
+//! tunnel.
 
 use grpc_network_gateway::services::gateway::proto::{
     gateway_controller_client::GatewayControllerClient,
     DeleteTunnelRequest,
+    ListRoutesRequest,
+    Route,
     StatusRequest,
     TunnelRequest,
 };
+use tonic::transport::Channel;
 
 const LOCAL_IP: &str = "10.0.1.5";
 const OWNER: &str = "smoke/smoke-client";
 const INTRUDER: &str = "smoke/intruder";
+
+/// Every route `ListRoutes` reports for `LOCAL_IP`. More than one would mean
+/// the key is not unique, so callers assert on the whole vector.
+async fn listed_routes(
+    client: &mut GatewayControllerClient<Channel>
+) -> Result<Vec<Route>, tonic::Status> {
+    Ok(
+        client
+            .list_routes(ListRoutesRequest {}).await?
+            .into_inner()
+            .routes.into_iter()
+            .filter(|r| r.local_ip == LOCAL_IP)
+            .collect()
+    )
+}
+
+fn expected_route(tunnel_id: &str, remote_endpoint: &str) -> Route {
+    Route {
+        local_ip: LOCAL_IP.into(),
+        tunnel_id: tunnel_id.into(),
+        remote_endpoint: remote_endpoint.into(),
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +70,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("status  -> tunnel present: {}", present);
     assert!(present, "created tunnel missing from gateway status");
 
+    let listed = listed_routes(&mut client).await?;
+    println!("list    -> {:?}", listed);
+    assert_eq!(
+        listed,
+        vec![expected_route("tun-paris-01", "203.0.113.7:51820")],
+        "ListRoutes must return the created tunnel exactly as stored"
+    );
+
     // The owner re-declaring its own route updates it in place.
     let updated = client.create_vpn_tunnel(TunnelRequest {
         tunnel_id: "tun-paris-02".into(),
@@ -61,6 +97,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         route.map(|r| r.tunnel_id),
         Some("tun-paris-02".to_string()),
         "the owner's own create must update the tunnel"
+    );
+
+    let listed = listed_routes(&mut client).await?;
+    println!("list    -> after own update: {:?}", listed);
+    assert_eq!(
+        listed,
+        vec![expected_route("tun-paris-02", "203.0.113.8:51820")],
+        "ListRoutes must return the updated tunnel"
     );
 
     // Ownership (AD-13): a resource in another namespace that declares the
@@ -104,6 +148,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "foreign-owner writes must leave the tunnel unchanged"
     );
 
+    let listed = listed_routes(&mut client).await?;
+    println!("list    -> after foreign writes: {:?}", listed);
+    assert_eq!(
+        listed,
+        vec![expected_route("tun-paris-02", "203.0.113.8:51820")],
+        "foreign-owner writes must leave the stored tunnel unchanged"
+    );
+
     // Validation runs before any write: a malformed endpoint is refused as a
     // permanent INVALID_ARGUMENT, not stored and not retried.
     let invalid_create = client.create_vpn_tunnel(TunnelRequest {
@@ -118,6 +170,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         code,
         Some(tonic::Code::InvalidArgument),
         "a malformed remote_endpoint must be refused with INVALID_ARGUMENT"
+    );
+
+    let listed = listed_routes(&mut client).await?;
+    println!("list    -> after invalid create: {:?}", listed);
+    assert_eq!(
+        listed,
+        vec![expected_route("tun-paris-02", "203.0.113.8:51820")],
+        "a refused create must leave the stored tunnel unchanged"
     );
 
     let first = client.delete_vpn_tunnel(DeleteTunnelRequest {
@@ -135,6 +195,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("status  -> tunnel present: {}", still_present);
     assert!(!still_present, "tunnel still listed after delete");
 
+    let listed = listed_routes(&mut client).await?;
+    println!("list    -> after delete: {:?}", listed);
+    assert!(listed.is_empty(), "ListRoutes still returns the deleted tunnel");
+
     // The property a finalizer and a retrying reconcile loop both rely on.
     let second = client.delete_vpn_tunnel(DeleteTunnelRequest {
         local_ip: LOCAL_IP.into(),
@@ -143,6 +207,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("delete  -> success={} existed={} {}", second.success, second.existed, second.status_message);
     assert!(second.success && !second.existed, "repeat delete must succeed and report existed=false");
 
-    println!("\nOK: create, observe, ownership, validation, delete, and idempotent re-delete all behave.");
+    println!(
+        "\nOK: create, observe, list, ownership, validation, delete, and idempotent re-delete all behave."
+    );
     Ok(())
 }

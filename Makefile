@@ -66,12 +66,16 @@ run: ## Run the gateway against the local Postgres
 	SQLX_OFFLINE=true cargo run --bin grpc_network_gateway
 
 .PHONY: smoke
-smoke: ## Exercise create/observe/delete against a running gateway
+smoke: ## Exercise create/observe/list/ownership/validation/delete against a running gateway
 	SQLX_OFFLINE=true cargo run --quiet --example smoke_client
 
 .PHONY: probe
 probe: ## Query the gRPC health service, exit non-zero when not serving
 	SQLX_OFFLINE=true cargo run --quiet --example health_probe
+
+.PHONY: routes
+routes: ## Print every route in the database via ListRoutes (needs a running gateway)
+	SQLX_OFFLINE=true cargo run --quiet --example list_routes
 
 # --- container ---------------------------------------------------------------
 

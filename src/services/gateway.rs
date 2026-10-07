@@ -20,7 +20,7 @@ use proto::{
 use crate::services::validation::{ check_owner, validate_remote_endpoint, validate_tunnel_id };
 use crate::store::{ self, Store };
 use tonic::Code;
-use tracing::{ error, info, warn };
+use tracing::{ debug, error, info, warn };
 
 /// Loads persisted routes into the in-memory table, returning how many were
 /// applied. Retryable: the routing table is replaced wholesale, so running this
@@ -64,6 +64,19 @@ fn log_failed_write(local_ip: Ipv4Addr, owner: &str, status: &Status, message: &
             error!(%local_ip, ?owner, code = ?status.code(), error = %status.message(), "{}", message);
         }
     }
+}
+
+/// Stored rows as `ListRoutes` sends them: verbatim, in the same order. A row
+/// whose local_ip does not parse is still actual state. `proto::Route` is
+/// spelled out because `Route` is the cache's type.
+fn to_wire(rows: Vec<store::StoredRoute>) -> Vec<proto::Route> {
+    rows.into_iter()
+        .map(|row| proto::Route {
+            local_ip: row.local_ip,
+            tunnel_id: row.tunnel_id,
+            remote_endpoint: row.remote_endpoint,
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -264,6 +277,34 @@ impl GatewayController for Gateway {
 
         Ok(Response::new(proto::StatusResponse { active_routes }))
     }
+
+    /// Actual state, read from the database alone. The routing table is never
+    /// consulted, so the answer does not depend on which pod serves the call or
+    /// whether it hydrated. A store failure is an error, never an empty list:
+    /// a reconciler would read an empty list as every route having vanished.
+    async fn list_routes(
+        &self,
+        _request: Request<proto::ListRoutesRequest>
+    ) -> Result<Response<proto::ListRoutesResponse>, Status> {
+        let rows = self.store.list_routes().await.map_err(|err| {
+            let status = Status::from(err);
+            match status.code() {
+                Code::Unavailable | Code::Internal => {
+                    error!(code = ?status.code(), error = %status.message(), "list routes failed");
+                }
+                _ => {
+                    warn!(code = ?status.code(), error = %status.message(), "list routes failed");
+                }
+            }
+            status
+        })?;
+
+        let routes = to_wire(rows);
+
+        // Debug, not info: a reconciler polls this on every pass.
+        debug!(count = routes.len(), "listed routes");
+        Ok(Response::new(proto::ListRoutesResponse { routes }))
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +422,42 @@ mod tests {
 
         assert_unavailable(&status);
         assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn list_routes_with_db_down_is_unavailable_and_ignores_cache() {
+        let gateway = gateway_with_db_down();
+        cache_old_route(&gateway).await;
+
+        let status = gateway
+            .list_routes(Request::new(proto::ListRoutesRequest {})).await
+            .expect_err("ListRoutes must fail when the database is down, not serve the cache");
+
+        assert_unavailable(&status);
+        assert_old_route_kept(&gateway).await;
+    }
+
+    #[test]
+    fn to_wire_copies_rows_verbatim_in_order() {
+        let row = |local_ip: &str, tunnel_id: &str, remote_endpoint: &str| store::StoredRoute {
+            local_ip: local_ip.to_string(),
+            tunnel_id: tunnel_id.to_string(),
+            remote_endpoint: remote_endpoint.to_string(),
+        };
+        let rows = vec![
+            row("not-an-ip", "tun-bad", "bad.example:1"),
+            row("010.0.1.5", "tun-zero", "198.51.100.2:080"),
+            row("10.0.1.5", "tun-canonical", "203.0.113.7:51820")
+        ];
+
+        let wire = to_wire(rows.clone());
+
+        assert_eq!(wire.len(), rows.len());
+        for (sent, stored) in wire.iter().zip(&rows) {
+            assert_eq!(sent.local_ip, stored.local_ip);
+            assert_eq!(sent.tunnel_id, stored.tunnel_id);
+            assert_eq!(sent.remote_endpoint, stored.remote_endpoint);
+        }
     }
 
     #[tokio::test]
