@@ -45,3 +45,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-persist-before-caching-on-create.md`
   summary: No guidance tells Stories 1.4-1.6 to run make test, so they can move add_route back ahead of the store write in the handlers they rewrite while make check and make check-sqlx stay green.
   evidence: Triage #11 (verification-gap, pre-verified). make check compiles the tests but never runs them; AGENTS.md says there is no test suite; epic-1-context.md names only check and check-sqlx as the enforcement; the 1.7 AC does not mention make test. Fix options: list make test in AGENTS.md (Story 1.7) and in each 1.4-1.6 spec's Verification, or have make check also run cargo test (offline either way).
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-give-every-route-an-owner-and-scope-writes-to-it.md`
+  summary: A database seeded before a schema change (old kind PVC, stale compose volume) hydrates and reports SERVING, then fails every create and delete with INTERNAL because the owner column is missing.
+  evidence: Triage #4. hydrate selects only local_ip, tunnel_id, remote_endpoint and readiness runs SELECT 1. Root is the in-place migration 01 plus initdb-on-empty-PVC model; only make cluster-db-reset / db-reset fix it, and nothing points to them at deploy time. Options: verify expected columns at hydrate, or move to forward migrations.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-give-every-route-an-owner-and-scope-writes-to-it.md`
+  summary: Ownership is verified only by the sequential make smoke; nothing runs OwnedByAnother, the existed-guarded cache removal, or two concurrent foreign-owner creates against Postgres, so a read-then-write regression in upsert_route passes every check.
+  evidence: Triage #5 (verification-gap, pre-verified). All unit tests use Store::unreachable(). Cheapest step: two tokio::join!-ed foreign-owner creates in smoke_client asserting exactly one wins; fuller: a #[sqlx::test] harness or a Store seam.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-give-every-route-an-owner-and-scope-writes-to-it.md`
+  summary: AGENTS.md still says to run make migrate after SQL changes, though migration 01 is edited in place (checksum mismatch on an existing database), and it mentions neither db-reset, cluster-db-reset, nor owner-scoped writes.
+  evidence: Triage #6. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-give-every-route-an-owner-and-scope-writes-to-it.md`
+  summary: Create and delete on one local_ip are not serialized across their store and cache writes, so concurrent calls can leave the cache holding a deleted route or missing a written one.
+  evidence: Triage #13. Pre-existing race. Since 1.4, delete clears the cache only when it removed a row, so a retried delete no longer heals the drift (Triage #12). Fix: a per-local_ip async lock held across store and cache writes.
