@@ -142,6 +142,9 @@ impl GatewayController for Gateway {
                 status
             })?;
 
+        // Store first, cache second: a failed delete must leave the route
+        // cached, because the row still exists and dropping it from memory would
+        // stop this pod forwarding a tunnel the database still holds.
         let existed = self.store
             .delete_route(&payload.local_ip).await
             .map_err(|err| {
@@ -229,5 +232,106 @@ impl GatewayController for Gateway {
         }
 
         Ok(Response::new(proto::StatusResponse { active_routes }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Store-first ordering, proved against a store that cannot reach Postgres:
+    //! a failed write must leave the routing table exactly as it was.
+
+    use super::*;
+    use tonic::Code;
+
+    const IP: &str = "10.0.0.5";
+
+    fn ip() -> Ipv4Addr {
+        IP.parse().unwrap()
+    }
+
+    fn gateway_with_db_down() -> Gateway {
+        Gateway::new(RoutingTable::new(), Store::unreachable())
+    }
+
+    fn create_request(tunnel_id: &str, remote_endpoint: &str) -> Request<TunnelRequest> {
+        Request::new(TunnelRequest {
+            local_ip: IP.to_string(),
+            tunnel_id: tunnel_id.to_string(),
+            remote_endpoint: remote_endpoint.to_string(),
+        })
+    }
+
+    async fn status_route(gateway: &Gateway) -> Option<proto::RouteDetails> {
+        gateway
+            .get_gateway_status(Request::new(proto::StatusRequest {})).await
+            .expect("GetGatewayStatus reads only the cache and cannot fail")
+            .into_inner()
+            .active_routes.into_iter()
+            .find(|route| route.destination_ip == IP)
+    }
+
+    fn assert_internal(status: &Status, prefix: &str) {
+        assert_eq!(status.code(), Code::Internal, "unexpected status: {status:?}");
+        assert!(
+            status.message().starts_with(prefix),
+            "message {:?} does not start with {prefix:?}",
+            status.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn create_with_db_down_leaves_empty_table_empty() {
+        let gateway = gateway_with_db_down();
+
+        let status = gateway
+            .create_vpn_tunnel(create_request("tun-new", "203.0.113.9:51820")).await
+            .expect_err("create must fail when the database is down");
+
+        assert_internal(&status, "Database persistence failure");
+        assert!(gateway.routing_table.lookup_route(&ip()).await.is_none());
+        assert!(gateway.routing_table.get_all_routes().await.is_empty());
+        assert!(status_route(&gateway).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_with_db_down_keeps_cached_route() {
+        let gateway = gateway_with_db_down();
+        gateway.routing_table.add_route(ip(), Route {
+            tunnel_id: "tun-old".to_string(),
+            remote_endpoint: "198.51.100.1:51820".to_string(),
+        }).await;
+
+        let status = gateway
+            .create_vpn_tunnel(create_request("tun-new", "203.0.113.9:51820")).await
+            .expect_err("create must fail when the database is down");
+
+        assert_internal(&status, "Database persistence failure");
+        let cached = gateway.routing_table.lookup_route(&ip()).await.expect("route still cached");
+        assert_eq!(cached.tunnel_id, "tun-old");
+        assert_eq!(cached.remote_endpoint, "198.51.100.1:51820");
+        let reported = status_route(&gateway).await.expect("route still reported");
+        assert_eq!(reported.tunnel_id, "tun-old");
+        assert_eq!(reported.remote_endpoint, "198.51.100.1:51820");
+    }
+
+    #[tokio::test]
+    async fn delete_with_db_down_keeps_cached_route() {
+        let gateway = gateway_with_db_down();
+        gateway.routing_table.add_route(ip(), Route {
+            tunnel_id: "tun-old".to_string(),
+            remote_endpoint: "198.51.100.1:51820".to_string(),
+        }).await;
+
+        let status = gateway
+            .delete_vpn_tunnel(Request::new(DeleteTunnelRequest { local_ip: IP.to_string() })).await
+            .expect_err("delete must fail when the database is down");
+
+        assert_internal(&status, "Database delete failure");
+        let cached = gateway.routing_table.lookup_route(&ip()).await.expect("route still cached");
+        assert_eq!(cached.tunnel_id, "tun-old");
+        assert_eq!(cached.remote_endpoint, "198.51.100.1:51820");
+        let reported = status_route(&gateway).await.expect("route still reported");
+        assert_eq!(reported.tunnel_id, "tun-old");
+        assert_eq!(reported.remote_endpoint, "198.51.100.1:51820");
     }
 }
