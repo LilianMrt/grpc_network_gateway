@@ -2,7 +2,7 @@
 #
 # The port mapping lets tooling on the host (examples/smoke_client.rs,
 # examples/health_probe.rs) talk to the in-cluster gateway without port-forward.
-# It is bound to 127.0.0.1 deliberately: kind publishes through Docker, and.
+# It is bound to 127.0.0.1 deliberately: kind publishes through Docker.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: netgw

@@ -29,20 +29,20 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-04-2026 12:11
-last_updated: 10-07-2026 12:14
+last_updated: 10-07-2026 12:27
 project: grpc_network_gateway
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
-  1-1-emit-every-gateway-log-line-through-tracing: review
-  1-2-move-every-sql-statement-behind-src-store: review
-  1-3-persist-before-caching-on-create: review
-  1-4-give-every-route-an-owner-and-scope-writes-to-it: review
-  1-5-return-one-failure-taxonomy-from-every-write-path: review
-  1-6-read-actual-state-from-durable-storage-with-listroutes: review
-  1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind: review
+  epic-1: done
+  1-1-emit-every-gateway-log-line-through-tracing: done
+  1-2-move-every-sql-statement-behind-src-store: done
+  1-3-persist-before-caching-on-create: done
+  1-4-give-every-route-an-owner-and-scope-writes-to-it: done
+  1-5-return-one-failure-taxonomy-from-every-write-path: done
+  1-6-read-actual-state-from-durable-storage-with-listroutes: done
+  1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind: done
   epic-1-retrospective: optional
 
   epic-2: backlog
