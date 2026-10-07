@@ -41,6 +41,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("status  -> tunnel present: {}", present);
     assert!(present, "created tunnel missing from gateway status");
 
+    // The owner re-declaring its own route updates it in place.
+    let updated = client.create_vpn_tunnel(TunnelRequest {
+        tunnel_id: "tun-paris-02".into(),
+        local_ip: LOCAL_IP.into(),
+        remote_endpoint: "203.0.113.8:51820".into(),
+        owner: OWNER.into(),
+    }).await?.into_inner();
+    println!("create  -> own update: success={} {}", updated.success, updated.status_message);
+
+    let route = client
+        .get_gateway_status(StatusRequest {}).await?
+        .into_inner()
+        .active_routes.into_iter()
+        .find(|r| r.destination_ip == LOCAL_IP);
+    println!("status  -> tunnel after own update: {:?}", route.as_ref().map(|r| &r.tunnel_id));
+    assert_eq!(
+        route.map(|r| r.tunnel_id),
+        Some("tun-paris-02".to_string()),
+        "the owner's own create must update the tunnel"
+    );
+
     // Ownership (AD-13): a resource in another namespace that declares the
     // same local_ip must not take the route over or tear it down.
     let foreign_create = client.create_vpn_tunnel(TunnelRequest {
@@ -78,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("status  -> tunnel after foreign writes: {:?}", route.as_ref().map(|r| &r.tunnel_id));
     assert_eq!(
         route.map(|r| r.tunnel_id),
-        Some("tun-paris-01".to_string()),
+        Some("tun-paris-02".to_string()),
         "foreign-owner writes must leave the tunnel unchanged"
     );
 
