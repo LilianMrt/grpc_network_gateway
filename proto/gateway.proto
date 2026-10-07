@@ -12,6 +12,10 @@ message TunnelRequest {
   string tunnel_id = 1;
   string local_ip = 2;
   string remote_endpoint = 3;
+  // The resource that owns this route, "<namespace>/<name>". Required. Create
+  // claims a missing route or updates the caller's own; a route held by another
+  // owner is refused with FAILED_PRECONDITION and left unchanged.
+  string owner = 4;
 }
 
 message TunnelResponse {
@@ -22,10 +26,13 @@ message TunnelResponse {
 // Tunnels are keyed on local_ip, which is the unique column in vpn_routes.
 message DeleteTunnelRequest {
   string local_ip = 1;
+  // Required. Only a route this owner holds is deleted.
+  string owner = 2;
 }
 
-// Idempotent: deleting an absent tunnel succeeds, so a reconcile loop can retry
-// freely. existed = false tells the caller the route was already gone.
+// Idempotent within the caller's ownership: deleting an absent tunnel, or one
+// held by another owner, succeeds without removing anything, so a reconcile loop
+// can retry freely. existed = false tells the caller it had no such route.
 message DeleteTunnelResponse {
   bool success = 1;
   bool existed = 2;

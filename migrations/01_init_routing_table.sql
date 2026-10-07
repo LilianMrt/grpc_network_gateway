@@ -3,5 +3,6 @@ CREATE TABLE IF NOT EXISTS vpn_routes (
     local_ip VARCHAR(45) NOT NULL UNIQUE,
     tunnel_id VARCHAR(255) NOT NULL,
     remote_endpoint VARCHAR(255) NOT NULL,
+    owner TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

@@ -17,7 +17,7 @@ use proto::{
     DeleteTunnelResponse,
 };
 
-use crate::store::{ self, Store };
+use crate::store::{ self, Store, UpsertOutcome };
 use tracing::{ error, info, warn };
 
 /// Loads persisted routes into the in-memory table, returning how many were
@@ -51,6 +51,17 @@ pub async fn hydrate(store: &Store, table: &RoutingTable) -> Result<usize, store
     Ok(count)
 }
 
+/// Rejects an empty `owner` before any store call. The empty string is never an
+/// owner: accepting it would let every ownerless caller share one identity.
+fn check_owner(owner: &str, local_ip: Ipv4Addr, message: &'static str) -> Result<(), Status> {
+    if owner.is_empty() {
+        let status = Status::invalid_argument("owner must not be empty");
+        warn!(%local_ip, code = ?status.code(), "{}", message);
+        return Err(status);
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Gateway {
     pub routing_table: RoutingTable,
@@ -73,6 +84,7 @@ impl GatewayController for Gateway {
         info!(
             local_ip = %payload.local_ip,
             tunnel_id = %payload.tunnel_id,
+            owner = %payload.owner,
             "received request to create tunnel"
         );
 
@@ -90,12 +102,18 @@ impl GatewayController for Gateway {
                 );
                 status
             })?;
+        check_owner(&payload.owner, local_ip, "create rejected: empty owner")?;
 
         // Store first, cache second: a failed write must leave the routing
         // table untouched, or packets would route through a tunnel the client
         // was told failed.
-        self.store
-            .upsert_route(&payload.local_ip, &payload.tunnel_id, &payload.remote_endpoint).await
+        let outcome = self.store
+            .upsert_route(
+                &payload.local_ip,
+                &payload.tunnel_id,
+                &payload.remote_endpoint,
+                &payload.owner
+            ).await
             .map_err(|err| {
                 let status = Status::internal(format!("Database persistence failure: {}", err));
                 error!(
@@ -106,6 +124,20 @@ impl GatewayController for Gateway {
                 );
                 status
             })?;
+
+        // The message never names the holder: it belongs to another namespace.
+        if outcome == UpsertOutcome::OwnedByAnother {
+            let status = Status::failed_precondition(
+                format!("Tunnel for {} is owned by another resource", local_ip)
+            );
+            warn!(
+                %local_ip,
+                owner = %payload.owner,
+                code = ?status.code(),
+                "create rejected: route owned by another resource"
+            );
+            return Err(status);
+        }
 
         let route_config = Route {
             tunnel_id: payload.tunnel_id.clone(),
@@ -141,12 +173,13 @@ impl GatewayController for Gateway {
                 );
                 status
             })?;
+        check_owner(&payload.owner, local_ip, "delete rejected: empty owner")?;
 
         // Store first, cache second: a failed delete must leave the route
         // cached, because the row still exists and dropping it from memory would
         // stop this pod forwarding a tunnel the database still holds.
         let existed = self.store
-            .delete_route(&payload.local_ip).await
+            .delete_route(&payload.local_ip, &payload.owner).await
             .map_err(|err| {
                 let status = Status::internal(format!("Database delete failure: {}", err));
                 error!(
@@ -158,14 +191,18 @@ impl GatewayController for Gateway {
                 status
             })?;
 
-        self.routing_table.remove_route(&local_ip).await;
+        // Only a removed row clears the cache: when nothing was deleted the
+        // route may belong to another owner and is still live.
+        if existed {
+            self.routing_table.remove_route(&local_ip).await;
+        }
 
         let status_message = if existed {
             format!("Tunnel for {} deleted", local_ip)
         } else {
             format!("No tunnel for {}, nothing to delete", local_ip)
         };
-        info!(%local_ip, existed, "tunnel delete handled");
+        info!(%local_ip, owner = %payload.owner, existed, "tunnel delete handled");
 
         // Deleting an absent tunnel is success, not an error: a reconcile loop
         // converges toward a desired state and must be safe to run repeatedly.
@@ -238,12 +275,15 @@ impl GatewayController for Gateway {
 #[cfg(test)]
 mod tests {
     //! Store-first ordering, proved against a store that cannot reach Postgres:
-    //! a failed write must leave the routing table exactly as it was.
+    //! a failed write must leave the routing table exactly as it was. The same
+    //! store proves input validation runs before any write: a request that
+    //! reached the store would fail `Internal`, not `InvalidArgument`.
 
     use super::*;
     use tonic::Code;
 
     const IP: &str = "10.0.0.5";
+    const OWNER: &str = "default/tunnel-a";
 
     fn ip() -> Ipv4Addr {
         IP.parse().unwrap()
@@ -254,11 +294,41 @@ mod tests {
     }
 
     fn create_request(tunnel_id: &str, remote_endpoint: &str) -> Request<TunnelRequest> {
+        create_request_owned_by(tunnel_id, remote_endpoint, OWNER)
+    }
+
+    fn create_request_owned_by(
+        tunnel_id: &str,
+        remote_endpoint: &str,
+        owner: &str
+    ) -> Request<TunnelRequest> {
         Request::new(TunnelRequest {
             local_ip: IP.to_string(),
             tunnel_id: tunnel_id.to_string(),
             remote_endpoint: remote_endpoint.to_string(),
+            owner: owner.to_string(),
         })
+    }
+
+    fn delete_request(owner: &str) -> Request<DeleteTunnelRequest> {
+        Request::new(DeleteTunnelRequest { local_ip: IP.to_string(), owner: owner.to_string() })
+    }
+
+    async fn cache_old_route(gateway: &Gateway) {
+        gateway.routing_table.add_route(ip(), Route {
+            tunnel_id: "tun-old".to_string(),
+            remote_endpoint: "198.51.100.1:51820".to_string(),
+        }).await;
+    }
+
+    async fn assert_old_route_kept(gateway: &Gateway) {
+        let cached = gateway.routing_table.lookup_route(&ip()).await.expect("route still cached");
+        assert_eq!(cached.tunnel_id, "tun-old");
+        assert_eq!(cached.remote_endpoint, "198.51.100.1:51820");
+        let reported = status_route(gateway).await.expect("route still reported");
+        assert_eq!(reported.tunnel_id, "tun-old");
+        assert_eq!(reported.remote_endpoint, "198.51.100.1:51820");
+        assert_eq!(gateway.routing_table.get_all_routes().await.len(), 1);
     }
 
     async fn status_route(gateway: &Gateway) -> Option<proto::RouteDetails> {
@@ -296,42 +366,52 @@ mod tests {
     #[tokio::test]
     async fn create_with_db_down_keeps_cached_route() {
         let gateway = gateway_with_db_down();
-        gateway.routing_table.add_route(ip(), Route {
-            tunnel_id: "tun-old".to_string(),
-            remote_endpoint: "198.51.100.1:51820".to_string(),
-        }).await;
+        cache_old_route(&gateway).await;
 
         let status = gateway
             .create_vpn_tunnel(create_request("tun-new", "203.0.113.9:51820")).await
             .expect_err("create must fail when the database is down");
 
         assert_internal(&status, "Database persistence failure");
-        let cached = gateway.routing_table.lookup_route(&ip()).await.expect("route still cached");
-        assert_eq!(cached.tunnel_id, "tun-old");
-        assert_eq!(cached.remote_endpoint, "198.51.100.1:51820");
-        let reported = status_route(&gateway).await.expect("route still reported");
-        assert_eq!(reported.tunnel_id, "tun-old");
-        assert_eq!(reported.remote_endpoint, "198.51.100.1:51820");
+        assert_old_route_kept(&gateway).await;
     }
 
     #[tokio::test]
     async fn delete_with_db_down_keeps_cached_route() {
         let gateway = gateway_with_db_down();
-        gateway.routing_table.add_route(ip(), Route {
-            tunnel_id: "tun-old".to_string(),
-            remote_endpoint: "198.51.100.1:51820".to_string(),
-        }).await;
+        cache_old_route(&gateway).await;
 
         let status = gateway
-            .delete_vpn_tunnel(Request::new(DeleteTunnelRequest { local_ip: IP.to_string() })).await
+            .delete_vpn_tunnel(delete_request(OWNER)).await
             .expect_err("delete must fail when the database is down");
 
         assert_internal(&status, "Database delete failure");
-        let cached = gateway.routing_table.lookup_route(&ip()).await.expect("route still cached");
-        assert_eq!(cached.tunnel_id, "tun-old");
-        assert_eq!(cached.remote_endpoint, "198.51.100.1:51820");
-        let reported = status_route(&gateway).await.expect("route still reported");
-        assert_eq!(reported.tunnel_id, "tun-old");
-        assert_eq!(reported.remote_endpoint, "198.51.100.1:51820");
+        assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn create_with_empty_owner_is_rejected_before_any_write() {
+        let gateway = gateway_with_db_down();
+        cache_old_route(&gateway).await;
+
+        let status = gateway
+            .create_vpn_tunnel(create_request_owned_by("tun-new", "203.0.113.9:51820", "")).await
+            .expect_err("create with an empty owner must be rejected");
+
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn delete_with_empty_owner_is_rejected_before_any_write() {
+        let gateway = gateway_with_db_down();
+        cache_old_route(&gateway).await;
+
+        let status = gateway
+            .delete_vpn_tunnel(delete_request("")).await
+            .expect_err("delete with an empty owner must be rejected");
+
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert_old_route_kept(&gateway).await;
     }
 }

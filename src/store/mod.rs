@@ -25,6 +25,15 @@ pub struct StoredRoute {
     pub remote_endpoint: String,
 }
 
+/// What [`Store::upsert_route`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpsertOutcome {
+    /// The route was inserted, or the caller's own route was updated.
+    Written,
+    /// Another owner holds the route; nothing was written.
+    OwnedByAnother,
+}
+
 /// A cheap, cloneable handle on the connection pool.
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -69,31 +78,46 @@ impl Store {
             .fetch_all(&self.pool).await
     }
 
-    /// Inserts the route for `local_ip`, or replaces its tunnel and endpoint
-    /// when one already exists.
+    /// Claims the route for `local_ip` for `owner`: inserts it when absent, or
+    /// replaces its tunnel and endpoint when `owner` already holds it. A route
+    /// held by another owner is left untouched.
+    ///
+    /// Ownership is decided inside the one statement, never by a read before
+    /// the write, so two concurrent creates for one `local_ip` cannot both win.
     pub async fn upsert_route(
         &self,
         local_ip: &str,
         tunnel_id: &str,
-        remote_endpoint: &str
-    ) -> Result<(), Error> {
-        sqlx::query!(
-            "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint)
-             VALUES ($1, $2, $3)
+        remote_endpoint: &str,
+        owner: &str
+    ) -> Result<UpsertOutcome, Error> {
+        let result = sqlx::query!(
+            "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint, owner)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT (local_ip)
-             DO UPDATE SET tunnel_id = EXCLUDED.tunnel_id, remote_endpoint = EXCLUDED.remote_endpoint",
+             DO UPDATE SET tunnel_id = EXCLUDED.tunnel_id, remote_endpoint = EXCLUDED.remote_endpoint
+             WHERE vpn_routes.owner = EXCLUDED.owner",
             local_ip,
             tunnel_id,
-            remote_endpoint
+            remote_endpoint,
+            owner
         )
             .execute(&self.pool).await?;
-        Ok(())
+        // The conflict branch's WHERE filters out a foreign row, so nothing is
+        // inserted or updated and no row is affected.
+        Ok(if result.rows_affected() == 0 {
+            UpsertOutcome::OwnedByAnother
+        } else {
+            UpsertOutcome::Written
+        })
     }
 
-    /// Removes the route for `local_ip`, returning whether a row existed.
-    pub async fn delete_route(&self, local_ip: &str) -> Result<bool, Error> {
+    /// Removes the route for `local_ip` if `owner` holds it, returning whether
+    /// a row was removed. A route held by another owner is left untouched and
+    /// reported as `false`, exactly like an absent one.
+    pub async fn delete_route(&self, local_ip: &str, owner: &str) -> Result<bool, Error> {
         let result = sqlx
-            ::query!("DELETE FROM vpn_routes WHERE local_ip = $1", local_ip)
+            ::query!("DELETE FROM vpn_routes WHERE local_ip = $1 AND owner = $2", local_ip, owner)
             .execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
