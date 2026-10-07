@@ -36,3 +36,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-2-move-every-sql-statement-behind-src-store.md`
   summary: AGENTS.md still says make check is the only automated verification and states no "SQL only in src/store/" rule, though make check-sqlx and the store boundary now exist.
   evidence: Triage #15. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-persist-before-caching-on-create.md`
+  summary: AGENTS.md still says there is no test suite and that make check is the only automated verification, though make test now runs the crate's first unit tests offline.
+  evidence: Story 1.3 added `#[cfg(test)] mod tests` in src/services/gateway.rs and the make test target. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-persist-before-caching-on-create.md`
+  summary: No unit test covers create's success path, so a regression that drops add_route after a successful upsert passes make test; only the hand-run make smoke against live Postgres catches it.
+  evidence: Triage #8. The 1.3 tests use Store::unreachable(), which can only fail. A test with a working store needs either live Postgres or a Store seam the 1.3 spec ruled out. Natural home: Story 1.5, which brings the first broader tests.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-persist-before-caching-on-create.md`
+  summary: No guidance tells Stories 1.4-1.6 to run make test, so they can move add_route back ahead of the store write in the handlers they rewrite while make check and make check-sqlx stay green.
+  evidence: Triage #11 (verification-gap, pre-verified). make check compiles the tests but never runs them; AGENTS.md says there is no test suite; epic-1-context.md names only check and check-sqlx as the enforcement; the 1.7 AC does not mention make test. Fix options: list make test in AGENTS.md (Story 1.7) and in each 1.4-1.6 spec's Verification, or have make check also run cargo test (offline either way).
