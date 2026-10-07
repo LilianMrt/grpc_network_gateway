@@ -57,3 +57,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-4-give-every-route-an-owner-and-scope-writes-to-it.md`
   summary: Create and delete on one local_ip are not serialized across their store and cache writes, so concurrent calls can leave the cache holding a deleted route or missing a written one.
   evidence: Triage #13. Pre-existing race. Since 1.4, delete clears the cache only when it removed a row, so a retried delete no longer heals the drift (Triage #12). Fix: a per-local_ip async lock held across store and cache writes.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: A tunnel_id containing CR/LF passes the length-only check, is stored, and is later logged with Display by hydrate's skip warning and route_packet's forwarding line, so it can forge log lines.
+  evidence: Triage #2. src/services/gateway.rs logs tunnel_id = %row.tunnel_id and tunnel_id = %route.tunnel_id; both lines predate 1.5, whose 3a decision covered only the first create line and the invalid-local_ip lines. Fix options: reject control characters in validate_tunnel_id (a new bound Story 2.3's CRD must mirror) or log stored strings with ?.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: A delete that commits but loses its connection before the reply returns UNAVAILABLE; the operator's retry gets existed=false, remove_route never runs, and the pod keeps forwarding through the deleted tunnel until restart.
+  evidence: Triage #3. delete_vpn_tunnel clears the cache only when existed; hydrate runs once per process. Pre-existing (the same path returned INTERNAL, which Story 3.1 also retries). Same family as the 1.4 create/delete serialization deferral.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: Only waiting for a pool connection is bounded (5s); a query that hangs after acquire (row lock, mid-query partition) has no statement_timeout or socket timeout, so the operator can still hit its own DEADLINE_EXCEEDED.
+  evidence: Triage #4. sqlx's acquire deadline (sqlx-core pool/inner.rs:252) covers connecting, not execution. Story 4.4 relies on the gateway answering before the operator deadline. Fix: set statement_timeout via PgConnectOptions options or after_connect, shorter than 3.1's deadline minus the acquire timeout.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: Status messages carry raw Postgres and I/O error text (e.g. column "owner" does not exist, Connection refused) to callers in any namespace.
+  evidence: Triage #10. src/store/error.rs formats {source} into every Status message. Pre-existing: "Database persistence failure: {err}" did the same. Fix: generic client message, full text in the server log.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: FAILED_PRECONDITION now depends on upsert_route returning Err(owned_by_another), and no offline test runs that path or checks the cache stays untouched on a conflict.
+  evidence: Triage #17 (verification-gap, pre-verified). Reverting the Err to Ok(()) passes all unit tests; only make smoke against live Postgres catches it. Needs a #[sqlx::test] harness or a Store seam, as in the 1.4 deferral.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-return-one-failure-taxonomy-from-every-write-path.md`
+  summary: AGENTS.md still says there is no test suite and make check is the only automated verification, though make test runs the crate's unit tests.
+  evidence: Triage #25. Agent-context file; Story 1.7 owns the AGENTS.md refresh.
