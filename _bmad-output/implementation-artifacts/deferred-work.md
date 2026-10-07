@@ -81,3 +81,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-read-actual-state-from-durable-storage-with-listroutes.md`
   summary: Nothing repeatable proves ListRoutes follows the database when the serving pod's cache differs on the success path; a handler that checked the store and then served the cache would pass make test and make smoke.
   evidence: Triage #12 (verification-gap, pre-verified). Unit tests reach only the database-down path; smoke's cache and DB agree at every ListRoutes check. Covered only by the manual two-gateway check. Needs the DB-backed harness (#[sqlx::test] or a Store seam) deferred in 1.4/1.5.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind.md`
+  summary: kind/cluster.yaml line 5 ends mid-sentence ("kind publishes through Docker, and."), so the reason the port mapping is bound to 127.0.0.1 is lost.
+  evidence: Triage #12. Truncated since it was written in 3bf5cee; the intended clause is not recoverable from history, so only the author can restore it.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-bring-agents-md-in-line-with-the-code-e1-leaves-behind.md`
+  summary: The kind/cluster.yaml header names smoke_client.rs and health_probe.rs as the host tools that use the 50051 port mapping, but not examples/list_routes.rs (make routes).
+  evidence: Triage #13. Pre-existing since Story 1.6 added list_routes.rs; one-word comment fix.
