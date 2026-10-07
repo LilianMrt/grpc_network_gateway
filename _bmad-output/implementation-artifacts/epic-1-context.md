@@ -15,6 +15,15 @@ Make the Rust Gateway a control-plane API that an external reconciler (the Go op
 - Story 1.5: Return one failure taxonomy from every write path
 - Story 1.6: Read actual state from durable storage with `ListRoutes`
 - Story 1.7: Bring `AGENTS.md` in line with the code E1 leaves behind
+- Story 1.8: Bound what a tunnel identifier and an owner may contain *(added 2026-10-07)*
+- Story 1.9: Expose route ownership on `ListRoutes` *(added 2026-10-07)*
+- Story 1.10: Prove the store's SQL against a real database *(added 2026-10-07)*
+
+**Amended 2026-10-07** by the Epic 1 retrospective and `planning-artifacts/sprint-change-proposal-2026-10-07.md`, which take precedence over older text below where they conflict:
+- `Route` carries `owner` as a fourth field; "already correct" is `owner` equal to the caller's plus exact `tunnel_id`/`remote_endpoint` equality (AD-12 amended). `id` and `created_at` stay off the wire.
+- `tunnel_id` matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, 1-255 characters. `owner` is non-empty, at most 317 characters, with no control characters (U+0000-U+001F, U+007F-U+009F); its format is otherwise unchecked (AD-15 amended). Bounds apply to writes only; existing rows still list and hydrate.
+- `make test-db` runs `#[sqlx::test]` tests against Postgres; `make test` stays offline.
+- Order: 1.8, then 1.9, then 1.10, all before Epic 2.
 
 ## Requirements & Constraints
 

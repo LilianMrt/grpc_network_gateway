@@ -31,7 +31,7 @@ Thirty-four FRs. **Ten are `Delivered — no story`** (FR-1, FR-2, FR-4 through 
 
 #### To build — these generate stories
 
-FR-3: The Operator can read every Tunnel the Gateway owns from `vpn_routes` rather than from the serving pod's routing table, via a new `ListRoutes` RPC returning a dedicated three-field `Route` message; an unreachable database returns `UNAVAILABLE`, distinguishable from "no Tunnels exist".
+FR-3: The Operator can read every Tunnel the Gateway owns from `vpn_routes` rather than from the serving pod's routing table, via a new `ListRoutes` RPC returning a dedicated four-field `Route` message carrying `owner`; an unreachable database returns `UNAVAILABLE`, distinguishable from "no Tunnels exist".
 FR-12: The Gateway, Postgres, and the `VpnTunnel` CRD install into a cluster from one Helm chart, with image tag and replica count as values and the CRD in `crds/`; `helm uninstall` leaves no namespaced objects behind except the PVC.
 FR-13: A user can declare a Tunnel as a Kubernetes resource in group `net.lilianmrt.dev`, version `v1alpha1`, with `spec` carrying `gatewayRef`, `localIP`, `tunnelID`, `remoteEndpoint`; `localIP` is API-server-validated as IPv4 and immutable after creation.
 FR-14: A user can see whether a Tunnel has converged from `kubectl get` alone — `status` as a subresource, printer columns for local IP, tunnel ID, Ready and age, and `status.conditions` in standard `metav1.Condition` shape.
@@ -107,7 +107,7 @@ Technical requirements drawn from the architecture spine that shape stories but 
 - **AD-9** — Both programs log structurally: Rust `tracing` + `tracing-subscriber`, Go `logr` through controller-runtime. Gateway lines carry the `local_ip` and, on failure, the gRPC code.
 - **AD-10** — `gatewayRef` resolves by DNS to `<name>.<namespace>.svc.cluster.local:50051`, never by an API read. **The port is a package constant in `internal/gateway`, not a `gatewayRef` field.** Any namespace is permitted.
 - **AD-11** — Operational envelope: one kind cluster `netgw`, single node; both images built locally and side-loaded, `imagePullPolicy: IfNotPresent`, nothing pulled from a registry; every published port binds `127.0.0.1`; Gateway and Operator both `replicas: 1`; the operator watches **cluster-wide**, so a `ClusterRole`. After the host fix, `kindest/node:v1.37.0` by digest; before it, `v1.34.11` is the only kind v0.33.0 prebuilt that boots.
-- **AD-12** — `ListRoutes` returns `repeated Route`, a **new** three-field message keyed `local_ip`. The shipped `RouteDetails` is left alone. Bookkeeping columns — `id`, `created_at`, `owner` — are not on the wire. "Already correct" is exact string comparison over `tunnel_id` and `remote_endpoint` **only**.
+- **AD-12** — `ListRoutes` returns `repeated Route`, a **new** four-field message keyed `local_ip`, carrying `owner`. The shipped `RouteDetails` is left alone. Bookkeeping columns — `id`, `created_at` — are not on the wire. "Already correct" is `owner` equal to the caller's and exact string equality of `tunnel_id` and `remote_endpoint` *(amended 2026-10-07)*.
 - **AD-13** — Every row has one owner (`<namespace>/<name>`); deletes are owner-scoped; a conflicting owner is a permanent `Ready=False` reason, not a retry; FR-2's idempotency is unchanged.
 - **AD-14** — **An orphan row is a legitimate steady state, not drift.** No story may add a reaper that sweeps `ListRoutes` and deletes unmatched rows — it would delete the very out-of-band route UJ-2's demo depends on. SM-5 is satisfied by finalizers, not by sweeping.
 - **AD-15** — One validation authority: the CRD's markers, mirrored by the gateway at the same bounds. Any value reaching the database and violating a constraint is a **permanent** error, never retryable.
@@ -191,7 +191,7 @@ All 24 `To build` FRs are mapped. The 10 `Delivered — no story` FRs are listed
 
 Seven epics, following **PRD §9, which is the authority on sequence**. Each depends only on those before it, and none requires a later epic to function.
 
-**Dependency correction 2026-10-04 (final validation).** Two of §9's "depends on nothing" entries do not survive the stories. E2 depends on E1, because Story 2.3's CRD markers mirror the validation bounds Story 1.5 records (AD-15). E5 depends on E1 and E2, because Story 5.2 packages the CRD from Story 2.3 and seeds the `owner` column from Story 1.4. The order is unchanged. What is lost is §9's plan to build E5 alongside E1 in Phase A: E5 now follows E2.
+**Dependency correction 2026-10-04 (final validation).** Two of §9's "depends on nothing" entries do not survive the stories. E2 depends on E1, because Story 2.3's CRD markers mirror the validation bounds Stories 1.5 and 1.8 record (AD-15). E5 depends on E1 and E2, because Story 5.2 packages the CRD from Story 2.3 and seeds the `owner` column from Story 1.4. The order is unchanged. What is lost is §9's plan to build E5 alongside E1 in Phase A: E5 now follows E2.
 
 ### Epic 1: Durable actual-state reads
 *Rust · Phase A · depends on nothing*
@@ -203,7 +203,7 @@ The Gateway becomes a control-plane API an external reconciler can trust: a call
 **Note:** §9 warns this epic has grown past its weekend budget. It is the one place I would look first if the cut order is ever exercised.
 
 ### Epic 2: The `VpnTunnel` API
-*Go · Phase B · depends on E1 (Story 1.5's validation bounds)*
+*Go · Phase B · depends on E1 (the validation bounds of Stories 1.5 and 1.8)*
 
 A user can declare a Tunnel as a Kubernetes resource and have the API server reject it if it is wrong, before any controller sees it. `kubectl get vpntunnels` renders a useful table. Nothing reconciles yet — and that is a coherent stopping point, because the API is the contract everything downstream is written against.
 
@@ -466,12 +466,12 @@ So that the reconciler's view of actual state does not depend on which pod answe
 
 **Given** `proto/gateway.proto`,
 **When** `ListRoutes` is added,
-**Then** it returns `repeated Route`, a new message with exactly three fields — `local_ip`, `tunnel_id`, `remote_endpoint` — keyed on `local_ip`,
+**Then** it returns `repeated Route`, a new message with exactly three fields — `local_ip`, `tunnel_id`, `remote_endpoint` — keyed on `local_ip` *(Story 1.9 adds `owner` as a fourth field)*,
 **And** the shipped `RouteDetails` message is left unmodified, because it is keyed `destination_ip` and belongs to `GetGatewayStatus`.
 
-**Given** the bookkeeping columns `id`, `created_at` and `owner`,
+**Given** the bookkeeping columns `id` and `created_at`,
 **When** a `Route` is serialized,
-**Then** none of them appear on the wire, so a whole-message comparison cannot make an already-correct Tunnel look like drift.
+**Then** neither appears on the wire *(`owner` was excluded here as built; Story 1.9 puts it on the wire, 2026-10-07)*, so a whole-message comparison cannot make an already-correct Tunnel look like drift.
 
 **Given** rows in `vpn_routes`,
 **When** `ListRoutes` is called,
@@ -528,13 +528,127 @@ So that instructions do not actively mislead whoever builds next.
 **Then** the pin stays in place because the host fix has not been applied,
 **And** a note records that Stories 5.1 (the host fix) and 5.3 (the pin move) retire it.
 
+*Stories 1.8–1.10 were added 2026-10-07 by the Epic 1 retrospective and `sprint-change-proposal-2026-10-07.md`; they land before Epic 2.*
+
+### Story 1.8: Bound what a tunnel identifier and an owner may contain
+
+As the operator's author,
+I want the gateway to refuse identifiers that Postgres cannot store or a log cannot show safely,
+So that a bad value fails at `kubectl apply` or at validation, never inside the database, and the CRD can mirror one exact rule.
+
+*Realizes AD-15 as amended 2026-10-07. Closes retro findings F-9, F-10, F-11, F-12 and the comment fixes F-2/F-8, and deferrals 1.5 #2 and 1.1 #5.*
+
+**Acceptance Criteria:**
+
+**Given** a create whose `tunnel_id` matches `^[A-Za-z0-9][A-Za-z0-9._-]*$` and is 1 to 255 characters,
+**When** it is validated,
+**Then** it passes,
+**And** any other `tunnel_id` (one containing NUL, CR, LF, a space or a non-ASCII character, or starting with `.`, `_` or `-`) returns `INVALID_ARGUMENT` before any write, with a message that does not echo the value.
+
+**Given** a create or delete whose `owner` contains a control character (U+0000–U+001F, U+007F–U+009F) or is longer than 317 characters,
+**When** it is validated,
+**Then** it returns `INVALID_ARGUMENT` before any write,
+**And** its format is otherwise unchecked (the 2026-10-04 decision stands), and the column stays `TEXT`.
+
+**Given** rows stored before this story whose `tunnel_id` breaks the new pattern,
+**When** the gateway hydrates or serves `ListRoutes`,
+**Then** they are still loaded and listed, because the bound applies to writes only.
+
+**Given** the five-place rule in `src/services/validation.rs`,
+**When** the bounds change,
+**Then** the consts, the module doc, the `proto/gateway.proto` comments and the Story 2.3 AC all state the same pattern and lengths, and the `owner` bound is stated in the gateway and the proto only, because no CRD field carries it.
+
+**Given** the two schema copies,
+**When** `make test` runs,
+**Then** an offline test asserts that `migrations/01_init_routing_table.sql` and `k8s/12-configmap-initdb.yaml` define the same `vpn_routes` columns, and that the `VARCHAR` widths equal the validation consts.
+
+**Given** a create or delete with `local_ip` `"10.0.0.999"`, `"010.0.0.5"` or `" 10.0.0.5"`,
+**When** it reaches the handler,
+**Then** it returns `INVALID_ARGUMENT`, not `UNAVAILABLE`, and the routing table is unchanged,
+**And** a request invalid in every field reports the `local_ip` failure first.
+
+**Given** a store that cannot reach Postgres,
+**When** a call fails,
+**Then** a test asserts it fails `Unavailable` within 2 seconds, so a dropped acquire timeout fails `make test` instead of only slowing it.
+
+**Given** the retro's comment findings,
+**When** this story lands,
+**Then** the `kind/cluster.yaml` header names `examples/list_routes.rs`, and `AGENTS.md` says `hydrate()` lives in `src/services/gateway.rs`.
+
+### Story 1.9: Expose route ownership on `ListRoutes`
+
+As the operator's author,
+I want every listed route to carry its owner,
+So that a reconciler tells "converged and mine" from "matches, but someone else's" without making a write.
+
+*Realizes FR-3 and FR-34 as amended 2026-10-07, governed by AD-12 and AD-13 as amended. Closes retro finding F-5, and with it the orphan-visibility finding.*
+
+**Acceptance Criteria:**
+
+**Given** `proto/gateway.proto`,
+**When** this story lands,
+**Then** `Route` gains `string owner = 4`, and `id` and `created_at` stay off the wire,
+**And** the proto comment defines "already correct" as `owner` equal to the caller's and `tunnel_id` and `remote_endpoint` equal by exact string, and calls a matching row under another owner a conflict.
+
+**Given** `Store::list_routes`,
+**When** it reads `vpn_routes`,
+**Then** it selects `owner`, and the regenerated `.sqlx/` lands in the same commit,
+**And** `ListRoutes` copies it verbatim. Hydration and the `RoutingTable` are unchanged: the cache does not hold owners.
+
+**Given** the proto's size note,
+**When** it is restated,
+**Then** it gives the ceiling at maximum widths in bytes: `tunnel_id` 255 ASCII, `remote_endpoint` 255 ASCII, `owner` 317 characters of up to 4 bytes each. That is roughly 2,300 routes under tonic's 4 MiB default.
+
+**Given** `make routes`,
+**When** it prints actual state,
+**Then** each line shows the owner, escaped like the other fields.
+
+**Given** `make smoke`,
+**When** it runs,
+**Then** it asserts that `ListRoutes` shows the smoke client's owner on its own row, and still shows that owner after the refused foreign-owner create.
+
+### Story 1.10: Prove the store's SQL against a real database
+
+As the gateway's maintainer,
+I want the owner-guarded upsert, the owner-scoped delete and `ListRoutes` tested automatically against Postgres,
+So that a regression in the SQL fails a check instead of waiting for someone to run `make smoke`.
+
+*Closes retro finding F-20: deferrals 1.2 #1-3, 1.3 #8, 1.4 #5, 1.5 #17 and 1.6 #12.*
+
+**Acceptance Criteria:**
+
+**Given** a running Postgres from `make db-up`,
+**When** `make test-db` runs,
+**Then** `#[sqlx::test]` tests run, each on a fresh database built from `migrations/`,
+**And** `make test` stays offline and does not run them.
+
+**Given** the handlers over a real store,
+**When** the tests run,
+**Then** they prove each of the following:
+- a create stores the row and caches the route;
+- an owner's second create updates its row and cache;
+- a foreign-owner create returns `FAILED_PRECONDITION` and leaves the row, its owner and the cache unchanged;
+- a foreign-owner delete returns `existed=false` and keeps the cached route;
+- an owner's delete removes the row and clears the cache;
+- concurrent creates by two owners for one `local_ip`, over many rounds, always produce exactly one winner;
+- `ListRoutes` returns the database's rows, with owners, when the cache disagrees;
+- an empty table returns OK and an empty list.
+
+**Given** `AGENTS.md`,
+**When** this story lands,
+**Then** it lists `make test-db` as a fourth check that needs Postgres, and drops the claim that no unit test reaches a working database.
+
+**Given** `deferred-work.md`,
+**When** this story lands,
+**Then** the entries it closes are marked resolved.
+
 ---
 
 ## Epic 2: The `VpnTunnel` API
 
 A user can declare a Tunnel as a Kubernetes resource and have the API server reject it if it is wrong, before any controller sees it. `kubectl get vpntunnels` renders a useful table. Nothing reconciles yet — and that is a coherent stopping point, because this API is the contract everything downstream is written against.
 
-*Go · Phase B · depends on E1 (Story 1.5) · FR-13, FR-14 · AD-10, AD-15, conventions: Naming, Identity, Conditions*
+*Go · Phase B · depends on E1 (Stories 1.5, 1.8) · FR-13, FR-14 · AD-10, AD-15, conventions: Naming, Identity, Conditions*
 
 ### Story 2.1: Install the Go toolchain on this host
 
@@ -626,9 +740,10 @@ So that a malformed tunnel is rejected at `kubectl apply` and never reaches the 
 **When** `kubectl apply` is run,
 **Then** it is rejected by the API server.
 
-**Given** the bounds Story 1.5 recorded for the gateway,
+**Given** the bounds Stories 1.5 and 1.8 recorded for the gateway,
 **When** the markers are written,
 **Then** `tunnelID` and `remoteEndpoint` are bounded at the same column widths the gateway enforces,
+**And** `tunnelID` carries the pattern `^[A-Za-z0-9][A-Za-z0-9._-]*$`, so a NUL, a newline or a space is rejected at `kubectl apply`,
 **And** the two validators cannot disagree, because a value that passes here and fails there is only fixable by delete-and-recreate (AD-15).
 
 **Given** an existing `VpnTunnel`,
@@ -695,7 +810,7 @@ So that the state of every declared tunnel is one command away.
 - **Address resolution is injectable, and a dev-only flag exposes it.** AD-10's `<name>.<namespace>.svc.cluster.local:50051` stays the one in-cluster DNS construction and the default. `internal/gateway` accepts an injected resolver, which FR-25's `testcontainers-go` test needs regardless, and a `--gateway-address` flag lets an out-of-cluster operator reach the kind Gateway on `127.0.0.1:50051`. That is what makes UJ-1 demonstrable here rather than in E6.
 - **This epic's acceptance criteria are verified with controller-runtime's fake client and the counting gateway fake**, not `envtest`. No envtest binaries land against the 4 GB ceiling until E4, which builds the FR-24 suite on top.
 - **Known gap, accepted:** the finalizer is FR-18 in E4, so until it lands, deleting a `VpnTunnel` leaves its row in `vpn_routes`. AD-14 already treats an orphan row as a legitimate steady state.
-- **Known limit, accepted 2026-10-04:** `ListRoutes` carries no owner (AD-12). So a second `VpnTunnel` whose spec exactly matches the owner's sees an already-correct row, makes no write, and reports `Ready=True/Converged` without owning that row. Ownership conflicts only show up when the specs differ. If the owner is deleted, the tunnel is absent until the second resource's next resync claims it. `Converged` means the Gateway holds the declared route, not that this resource owns it.
+- **Superseded 2026-10-07 (Epic 1 retro F-5):** the 2026-10-04 known limit — `ListRoutes` carrying no owner — is removed by Story 1.9. A row that matches the spec but is held by another owner is now a conflict seen on read: `Converged` means this resource owns the declared route.
 
 ### Story 3.1: Reach a Gateway through one client boundary
 
@@ -800,9 +915,14 @@ So that I declare tunnels instead of calling RPCs.
 **When** Reconcile runs,
 **Then** exactly one `Create` is made, which upserts.
 
-**Given** a route that matches the spec on `tunnel_id` and `remote_endpoint` by exact string comparison,
+**Given** a route whose `owner` is this resource's `<namespace>/<name>` and which matches the spec on `tunnel_id` and `remote_endpoint` by exact string comparison,
 **When** Reconcile runs,
 **Then** the fake records zero `Create` and zero `Delete` calls.
+
+**Given** a route for `spec.localIP` whose `owner` is a different resource, whatever its `tunnel_id` and `remote_endpoint`,
+**When** Reconcile runs,
+**Then** the fake records zero `Create` and zero `Delete` calls,
+**And** the pass reports the conflict through Story 3.4's `OwnedByAnother` reason.
 
 **Given** `List` returns routes for other local IPs, including ones no `VpnTunnel` declares,
 **When** Reconcile runs,
@@ -881,7 +1001,7 @@ So that a Gateway outage heals by itself and a bad spec does not spin forever.
 **And** Reconcile returns no error and asks for no backoff retry, because retrying cannot fix the spec and the remedy is to delete and recreate it (AD-15),
 **And** from Story 4.1 onward the resource is still re-checked at the resync interval, which is a re-check and not a retry.
 
-**Given** a conflict error (`FAILED_PRECONDITION`),
+**Given** a conflict — a `FAILED_PRECONDITION` from `Create`, or a route listed under another owner (Story 3.2) —
 **When** Reconcile handles it,
 **Then** `Ready` is `False` with reason `OwnedByAnother` and a message naming the conflict,
 **And** nothing is retried with backoff and nothing changes at the Gateway.
