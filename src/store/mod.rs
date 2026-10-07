@@ -40,6 +40,20 @@ impl Store {
         Ok(Self { pool })
     }
 
+    /// A store whose every call fails with `PoolTimedOut`, as production does
+    /// when Postgres is down. Port 1 refuses the connection; sqlx retries a
+    /// refusal until the acquire deadline, so the timeout is short to keep each
+    /// test well under a second instead of sqlx's default 30s.
+    #[cfg(test)]
+    pub(crate) fn unreachable() -> Self {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://netgw@127.0.0.1:1/netgw")
+            .expect("a well-formed Postgres URL");
+        Self { pool }
+    }
+
     /// Succeeds when the database answers a trivial query.
     pub async fn ping(&self) -> Result<(), Error> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;

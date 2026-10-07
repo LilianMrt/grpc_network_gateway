@@ -41,6 +41,10 @@ check-sqlx: ## Regenerate .sqlx and fail if it differs from git (needs Postgres)
 check: ## Type-check everything without a database
 	SQLX_OFFLINE=true cargo check --all-targets
 
+.PHONY: test
+test: ## Run the unit tests (no database needed)
+	SQLX_OFFLINE=true cargo test
+
 .PHONY: run
 run: ## Run the gateway against the local Postgres
 	SQLX_OFFLINE=true cargo run --bin grpc_network_gateway
