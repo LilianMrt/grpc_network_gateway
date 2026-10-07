@@ -1,6 +1,16 @@
 syntax = "proto3";
 package grpc.connectivity;
 
+// Every write RPC fails with one of these codes, the same on every RPC:
+//   UNAVAILABLE          the database cannot be reached, including a pool
+//                        acquire timeout (5s). Retryable.
+//   INVALID_ARGUMENT     a field breaks the bounds below, checked before any
+//                        write, or the database rejects a value (SQLSTATE
+//                        classes 22 and 23). Permanent: do not retry unchanged.
+//   FAILED_PRECONDITION  CreateVpnTunnel only: the route is owned by another
+//                        resource. A foreign-owner delete is not an error; it
+//                        succeeds with existed = false.
+//   INTERNAL             anything unexpected.
 service GatewayController {
   rpc CreateVpnTunnel (TunnelRequest) returns (TunnelResponse);
   rpc RoutePacket (PacketRequest) returns (PacketResponse);
@@ -8,9 +18,19 @@ service GatewayController {
   rpc GetGatewayStatus (StatusRequest) returns (StatusResponse);
 }
 
+// Bounds are the vpn_routes column widths, counted in characters (Postgres
+// VARCHAR semantics), not bytes. The gateway checks them in the order
+// local_ip, owner, tunnel_id, remote_endpoint; CRD validation mirrors them.
 message TunnelRequest {
+  // Required, 1 to 255 characters.
   string tunnel_id = 1;
+  // A dotted IPv4 address, e.g. "10.0.0.5". The route's key.
   string local_ip = 2;
+  // "host:port", at most 255 characters, split on the last ':'. port: ASCII
+  // digits, 1 to 65535; leading zeros are accepted ("h:080" is port 80). host: a dotted IPv4 address (no leading zeros), or an
+  // RFC 1123 hostname: dot-separated labels of 1 to 63 [A-Za-z0-9-], no
+  // leading or trailing '-', at most 253 characters, no trailing dot. A host of
+  // only digits and dots must be a valid IPv4 address. No IPv6.
   string remote_endpoint = 3;
   // The resource that owns this route, "<namespace>/<name>". Required. Create
   // claims a missing route or updates the caller's own; a route held by another
@@ -25,6 +45,7 @@ message TunnelResponse {
 
 // Tunnels are keyed on local_ip, which is the unique column in vpn_routes.
 message DeleteTunnelRequest {
+  // A dotted IPv4 address.
   string local_ip = 1;
   // Required. Only a route this owner holds is deleted.
   string owner = 2;

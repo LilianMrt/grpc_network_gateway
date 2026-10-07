@@ -17,7 +17,9 @@ use proto::{
     DeleteTunnelResponse,
 };
 
-use crate::store::{ self, Store, UpsertOutcome };
+use crate::services::validation::{ check_owner, validate_remote_endpoint, validate_tunnel_id };
+use crate::store::{ self, Store };
+use tonic::Code;
 use tracing::{ error, info, warn };
 
 /// Loads persisted routes into the in-memory table, returning how many were
@@ -51,15 +53,17 @@ pub async fn hydrate(store: &Store, table: &RoutingTable) -> Result<usize, store
     Ok(count)
 }
 
-/// Rejects an empty `owner` before any store call. The empty string is never an
-/// owner: accepting it would let every ownerless caller share one identity.
-fn check_owner(owner: &str, local_ip: Ipv4Addr, message: &'static str) -> Result<(), Status> {
-    if owner.is_empty() {
-        let status = Status::invalid_argument("owner must not be empty");
-        warn!(%local_ip, code = ?status.code(), "{}", message);
-        return Err(status);
+/// Logs a write that failed with `status`. A caller's mistake (bad input, a
+/// route it does not own) is a warning; anything else is an error.
+fn log_failed_write(local_ip: Ipv4Addr, owner: &str, status: &Status, message: &'static str) {
+    match status.code() {
+        Code::InvalidArgument | Code::FailedPrecondition => {
+            warn!(%local_ip, ?owner, code = ?status.code(), error = %status.message(), "{}", message);
+        }
+        _ => {
+            error!(%local_ip, ?owner, code = ?status.code(), error = %status.message(), "{}", message);
+        }
     }
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -81,10 +85,12 @@ impl GatewayController for Gateway {
         request: Request<TunnelRequest>
     ) -> Result<Response<TunnelResponse>, Status> {
         let payload = request.into_inner();
+        // Debug-formatted: nothing is validated yet, and `?` escapes a CR/LF
+        // that would otherwise forge a log line.
         info!(
-            local_ip = %payload.local_ip,
-            tunnel_id = %payload.tunnel_id,
-            owner = %payload.owner,
+            local_ip = ?payload.local_ip,
+            tunnel_id = ?payload.tunnel_id,
+            owner = ?payload.owner,
             "received request to create tunnel"
         );
 
@@ -95,19 +101,28 @@ impl GatewayController for Gateway {
                     format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
                 );
                 warn!(
-                    local_ip = %payload.local_ip,
+                    local_ip = ?payload.local_ip,
                     code = ?status.code(),
                     error = %err,
                     "create rejected: invalid local_ip"
                 );
                 status
             })?;
-        check_owner(&payload.owner, local_ip, "create rejected: empty owner")?;
+        // Every check runs before the store is called, in this order. A value
+        // past here fits its column, so the database's own checks are a backstop.
+        check_owner(&payload.owner)
+            .and_then(|()| validate_tunnel_id(&payload.tunnel_id))
+            .and_then(|()| validate_remote_endpoint(&payload.remote_endpoint))
+            .map_err(|status| {
+                warn!(%local_ip, code = ?status.code(), error = %status.message(), "create rejected");
+                status
+            })?;
 
         // Store first, cache second: a failed write must leave the routing
         // table untouched, or packets would route through a tunnel the client
-        // was told failed.
-        let outcome = self.store
+        // was told failed. The store decides the code, including
+        // FAILED_PRECONDITION for a route another owner holds.
+        self.store
             .upsert_route(
                 &payload.local_ip,
                 &payload.tunnel_id,
@@ -115,29 +130,10 @@ impl GatewayController for Gateway {
                 &payload.owner
             ).await
             .map_err(|err| {
-                let status = Status::internal(format!("Database persistence failure: {}", err));
-                error!(
-                    %local_ip,
-                    code = ?status.code(),
-                    error = %err,
-                    "create failed: database persistence failure"
-                );
+                let status = Status::from(err);
+                log_failed_write(local_ip, &payload.owner, &status, "create failed");
                 status
             })?;
-
-        // The message never names the holder: it belongs to another namespace.
-        if outcome == UpsertOutcome::OwnedByAnother {
-            let status = Status::failed_precondition(
-                format!("Tunnel for {} is owned by another resource", local_ip)
-            );
-            warn!(
-                %local_ip,
-                owner = %payload.owner,
-                code = ?status.code(),
-                "create rejected: route owned by another resource"
-            );
-            return Err(status);
-        }
 
         let route_config = Route {
             tunnel_id: payload.tunnel_id.clone(),
@@ -166,14 +162,17 @@ impl GatewayController for Gateway {
                     format!("Invalid local_ip format '{}': {}", payload.local_ip, err)
                 );
                 warn!(
-                    local_ip = %payload.local_ip,
+                    local_ip = ?payload.local_ip,
                     code = ?status.code(),
                     error = %err,
                     "delete rejected: invalid local_ip"
                 );
                 status
             })?;
-        check_owner(&payload.owner, local_ip, "delete rejected: empty owner")?;
+        check_owner(&payload.owner).map_err(|status| {
+            warn!(%local_ip, code = ?status.code(), error = %status.message(), "delete rejected");
+            status
+        })?;
 
         // Store first, cache second: a failed delete must leave the route
         // cached, because the row still exists and dropping it from memory would
@@ -181,13 +180,8 @@ impl GatewayController for Gateway {
         let existed = self.store
             .delete_route(&payload.local_ip, &payload.owner).await
             .map_err(|err| {
-                let status = Status::internal(format!("Database delete failure: {}", err));
-                error!(
-                    %local_ip,
-                    code = ?status.code(),
-                    error = %err,
-                    "delete failed: database delete failure"
-                );
+                let status = Status::from(err);
+                log_failed_write(local_ip, &payload.owner, &status, "delete failed");
                 status
             })?;
 
@@ -202,7 +196,7 @@ impl GatewayController for Gateway {
         } else {
             format!("No tunnel for {} owned by {}, nothing to delete", local_ip, payload.owner)
         };
-        info!(%local_ip, owner = %payload.owner, existed, "tunnel delete handled");
+        info!(%local_ip, owner = ?payload.owner, existed, "tunnel delete handled");
 
         // Deleting an absent tunnel is success, not an error: a reconcile loop
         // converges toward a desired state and must be safe to run repeatedly.
@@ -277,10 +271,10 @@ mod tests {
     //! Store-first ordering, proved against a store that cannot reach Postgres:
     //! a failed write must leave the routing table exactly as it was. The same
     //! store proves input validation runs before any write: a request that
-    //! reached the store would fail `Internal`, not `InvalidArgument`.
+    //! reached the store would fail `Unavailable`, not `InvalidArgument`.
 
     use super::*;
-    use tonic::Code;
+    use crate::services::validation;
 
     const IP: &str = "10.0.0.5";
     const OWNER: &str = "default/tunnel-a";
@@ -340,11 +334,11 @@ mod tests {
             .find(|route| route.destination_ip == IP)
     }
 
-    fn assert_internal(status: &Status, prefix: &str) {
-        assert_eq!(status.code(), Code::Internal, "unexpected status: {status:?}");
+    fn assert_unavailable(status: &Status) {
+        assert_eq!(status.code(), Code::Unavailable, "unexpected status: {status:?}");
         assert!(
-            status.message().starts_with(prefix),
-            "message {:?} does not start with {prefix:?}",
+            status.message().starts_with("database unavailable"),
+            "message {:?} does not start with \"database unavailable\"",
             status.message()
         );
     }
@@ -357,7 +351,7 @@ mod tests {
             .create_vpn_tunnel(create_request("tun-new", "203.0.113.9:51820")).await
             .expect_err("create must fail when the database is down");
 
-        assert_internal(&status, "Database persistence failure");
+        assert_unavailable(&status);
         assert!(gateway.routing_table.lookup_route(&ip()).await.is_none());
         assert!(gateway.routing_table.get_all_routes().await.is_empty());
         assert!(status_route(&gateway).await.is_none());
@@ -372,7 +366,7 @@ mod tests {
             .create_vpn_tunnel(create_request("tun-new", "203.0.113.9:51820")).await
             .expect_err("create must fail when the database is down");
 
-        assert_internal(&status, "Database persistence failure");
+        assert_unavailable(&status);
         assert_old_route_kept(&gateway).await;
     }
 
@@ -385,7 +379,7 @@ mod tests {
             .delete_vpn_tunnel(delete_request(OWNER)).await
             .expect_err("delete must fail when the database is down");
 
-        assert_internal(&status, "Database delete failure");
+        assert_unavailable(&status);
         assert_old_route_kept(&gateway).await;
     }
 
@@ -413,5 +407,50 @@ mod tests {
 
         assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
         assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn create_with_overlong_tunnel_id_is_rejected_before_any_write() {
+        let gateway = gateway_with_db_down();
+        cache_old_route(&gateway).await;
+
+        let tunnel_id = "t".repeat(validation::MAX_TUNNEL_ID_CHARS + 1);
+        let status = gateway
+            .create_vpn_tunnel(create_request(&tunnel_id, "203.0.113.9:51820")).await
+            .expect_err("create with an overlong tunnel_id must be rejected");
+
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn create_with_bad_endpoint_is_rejected_before_any_write() {
+        let gateway = gateway_with_db_down();
+        cache_old_route(&gateway).await;
+
+        let status = gateway
+            .create_vpn_tunnel(create_request("tun-new", "no-port")).await
+            .expect_err("create with a malformed remote_endpoint must be rejected");
+
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert_old_route_kept(&gateway).await;
+    }
+
+    #[tokio::test]
+    async fn create_reports_the_first_failing_check_in_order() {
+        let gateway = gateway_with_db_down();
+        let tunnel_id = "t".repeat(validation::MAX_TUNNEL_ID_CHARS + 1);
+
+        let status = gateway
+            .create_vpn_tunnel(create_request_owned_by(&tunnel_id, "no-port", "")).await
+            .expect_err("every field is invalid");
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert!(status.message().starts_with("owner must not be empty"), "{status:?}");
+
+        let status = gateway
+            .create_vpn_tunnel(create_request(&tunnel_id, "no-port")).await
+            .expect_err("tunnel_id and remote_endpoint are invalid");
+        assert_eq!(status.code(), Code::InvalidArgument, "unexpected status: {status:?}");
+        assert!(status.message().starts_with("tunnel_id must be"), "{status:?}");
     }
 }

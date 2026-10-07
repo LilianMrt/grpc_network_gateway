@@ -9,12 +9,14 @@
 //! The store never imports the network module or touches the cache, and the
 //! routing table knows nothing about the store.
 
+use std::time::Duration;
+
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-/// The error every store call returns. A plain alias for now: it is the seam a
-/// later failure taxonomy replaces without touching the callers' signatures.
-pub type Error = sqlx::Error;
+mod error;
+
+pub use error::{ Error, ErrorKind };
 
 /// One persisted row of `vpn_routes`, as stored. `local_ip` is not parsed
 /// here: deciding what to do with a malformed row is the caller's business.
@@ -23,15 +25,6 @@ pub struct StoredRoute {
     pub local_ip: String,
     pub tunnel_id: String,
     pub remote_endpoint: String,
-}
-
-/// What [`Store::upsert_route`] did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UpsertOutcome {
-    /// The route was inserted, or the caller's own route was updated.
-    Written,
-    /// Another owner holds the route; nothing was written.
-    OwnedByAnother,
 }
 
 /// A cheap, cloneable handle on the connection pool.
@@ -44,8 +37,15 @@ impl Store {
     /// Builds the pool without connecting. Constructing it must not require
     /// Postgres to be up, so a process started before its database reports
     /// not-ready instead of failing to start.
-    pub fn connect_lazy(url: &str) -> Result<Self, Error> {
-        let pool = PgPoolOptions::new().max_connections(5).connect_lazy(url)?;
+    ///
+    /// `acquire_timeout` bounds how long a call waits for a connection before
+    /// failing `Unavailable`; with Postgres down that is how long every call
+    /// takes to fail.
+    pub fn connect_lazy(url: &str, acquire_timeout: Duration) -> Result<Self, Error> {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(acquire_timeout)
+            .connect_lazy(url)?;
         Ok(Self { pool })
     }
 
@@ -53,14 +53,12 @@ impl Store {
     /// when Postgres is down. Port 1 refuses the connection; sqlx retries a
     /// refusal until the acquire deadline, so the timeout is short to keep each
     /// test well under a second instead of sqlx's default 30s.
+    /// Built through [`Store::connect_lazy`], so the tests exercise the
+    /// production constructor and its timeout parameter.
     #[cfg(test)]
     pub(crate) fn unreachable() -> Self {
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(std::time::Duration::from_millis(200))
-            .connect_lazy("postgres://netgw@127.0.0.1:1/netgw")
-            .expect("a well-formed Postgres URL");
-        Self { pool }
+        Self::connect_lazy("postgres://netgw@127.0.0.1:1/netgw", Duration::from_millis(200))
+            .expect("a well-formed Postgres URL")
     }
 
     /// Succeeds when the database answers a trivial query.
@@ -71,16 +69,18 @@ impl Store {
 
     /// Every persisted route.
     pub async fn list_routes(&self) -> Result<Vec<StoredRoute>, Error> {
-        sqlx::query_as!(
+        let routes = sqlx::query_as!(
             StoredRoute,
             "SELECT local_ip, tunnel_id, remote_endpoint FROM vpn_routes"
         )
-            .fetch_all(&self.pool).await
+            .fetch_all(&self.pool).await?;
+        Ok(routes)
     }
 
     /// Claims the route for `local_ip` for `owner`: inserts it when absent, or
     /// replaces its tunnel and endpoint when `owner` already holds it. A route
-    /// held by another owner is left untouched.
+    /// held by another owner is left untouched and reported as
+    /// [`ErrorKind::OwnedByAnother`].
     ///
     /// Ownership is decided inside the one statement, never by a read before
     /// the write, so two concurrent creates for one `local_ip` cannot both win.
@@ -90,7 +90,7 @@ impl Store {
         tunnel_id: &str,
         remote_endpoint: &str,
         owner: &str
-    ) -> Result<UpsertOutcome, Error> {
+    ) -> Result<(), Error> {
         let result = sqlx::query!(
             "INSERT INTO vpn_routes (local_ip, tunnel_id, remote_endpoint, owner)
              VALUES ($1, $2, $3, $4)
@@ -105,11 +105,10 @@ impl Store {
             .execute(&self.pool).await?;
         // The conflict branch's WHERE filters out a foreign row, so nothing is
         // inserted or updated and no row is affected.
-        Ok(if result.rows_affected() == 0 {
-            UpsertOutcome::OwnedByAnother
-        } else {
-            UpsertOutcome::Written
-        })
+        if result.rows_affected() == 0 {
+            return Err(Error::owned_by_another(local_ip));
+        }
+        Ok(())
     }
 
     /// Removes the route for `local_ip` if `owner` holds it, returning whether

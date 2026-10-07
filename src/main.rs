@@ -16,6 +16,15 @@ use grpc_network_gateway::services::health;
 use grpc_network_gateway::services::health::{ LIVENESS, OVERALL };
 use grpc_network_gateway::store::Store;
 
+/// How long a call waits for a database connection before failing
+/// `UNAVAILABLE`, instead of the 30s it would wait by default. Story 3.1's
+/// default per-call deadline on the operator must exceed this, so that a
+/// database outage reaches it as a retryable `UNAVAILABLE` and not as its own
+/// `DEADLINE_EXCEEDED` — though only waiting for and opening a connection is
+/// bounded; a query that hangs after acquire is not. `proto/gateway.proto`
+/// restates the 5s value: change both together.
+const POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env for local runs. In a container the environment is already set,
@@ -37,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Lazy: constructing the pool must not require Postgres to be up yet, so a
     // pod scheduled before its database reports not-ready instead of crashing.
-    let store = Store::connect_lazy(&database_url)?;
+    let store = Store::connect_lazy(&database_url, POOL_ACQUIRE_TIMEOUT)?;
 
     let routing_table = RoutingTable::new();
 

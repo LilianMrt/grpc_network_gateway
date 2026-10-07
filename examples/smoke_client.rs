@@ -4,7 +4,8 @@
 //!
 //! Exercises the reconciliation primitives an operator depends on: create a
 //! tunnel, observe it in the gateway's reported state, confirm another owner
-//! can neither overwrite nor delete it, delete it, and confirm the delete is
+//! can neither overwrite nor delete it, confirm a malformed request is refused
+//! before any write, delete it, and confirm the delete is
 //! idempotent when repeated against an already-absent tunnel.
 
 use grpc_network_gateway::services::gateway::proto::{
@@ -103,6 +104,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "foreign-owner writes must leave the tunnel unchanged"
     );
 
+    // Validation runs before any write: a malformed endpoint is refused as a
+    // permanent INVALID_ARGUMENT, not stored and not retried.
+    let invalid_create = client.create_vpn_tunnel(TunnelRequest {
+        tunnel_id: "tun-paris-03".into(),
+        local_ip: LOCAL_IP.into(),
+        remote_endpoint: "no-port".into(),
+        owner: OWNER.into(),
+    }).await;
+    let code = invalid_create.as_ref().err().map(|status| status.code());
+    println!("create  -> invalid endpoint: {:?}", code);
+    assert_eq!(
+        code,
+        Some(tonic::Code::InvalidArgument),
+        "a malformed remote_endpoint must be refused with INVALID_ARGUMENT"
+    );
+
     let first = client.delete_vpn_tunnel(DeleteTunnelRequest {
         local_ip: LOCAL_IP.into(),
         owner: OWNER.into(),
@@ -126,6 +143,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("delete  -> success={} existed={} {}", second.success, second.existed, second.status_message);
     assert!(second.success && !second.existed, "repeat delete must succeed and report existed=false");
 
-    println!("\nOK: create, observe, ownership, delete, and idempotent re-delete all behave.");
+    println!("\nOK: create, observe, ownership, validation, delete, and idempotent re-delete all behave.");
     Ok(())
 }
